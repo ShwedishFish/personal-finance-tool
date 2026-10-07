@@ -1,6 +1,7 @@
 # Secrets
 .env
 .env.*
+!.env.example
 *.pem
 *.key
 credentials.json
@@ -20,7 +21,7 @@ build/
 # Local data
 *.sqlite
 *.db
-data/private/
+data/
 
 # OS / editor
 .DS_Store

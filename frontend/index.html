@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Personal Finance Tool</title>
+  <link rel="stylesheet" href="/styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Personal Finance Tool</div>
+    <nav id="tabs">
+      <button data-tab="dashboard" class="active">Dashboard</button>
+      <button data-tab="accounts">Accounts</button>
+      <button data-tab="plan">Plan</button>
+      <button data-tab="compare">Compare</button>
+      <button data-tab="debt">Debt</button>
+    </nav>
+  </header>
+
+  <main>
+    <section id="tab-dashboard" class="tab active">
+      <div class="cards" id="summary-cards"></div>
+      <div class="grid-2">
+        <div class="panel">
+          <h2>Net worth over time</h2>
+          <div class="chart-box"><canvas id="nw-chart"></canvas></div>
+          <p class="muted" id="nw-empty" hidden>Add accounts and record balances to see your history.</p>
+        </div>
+        <div class="panel">
+          <h2>Asset allocation</h2>
+          <div class="chart-box"><canvas id="alloc-chart"></canvas></div>
+          <p class="muted" id="alloc-empty" hidden>No assets yet.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-accounts" class="tab">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Accounts</h2>
+          <div class="actions">
+            <label class="inline"><input type="checkbox" id="show-archived" /> Show archived</label>
+            <button id="add-account" class="primary">Add account</button>
+          </div>
+        </div>
+        <div class="table-wrap"><table id="accounts-table"></table></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Bank sync (Plaid)</h2>
+          <div class="actions">
+            <button id="plaid-sync">Sync now</button>
+            <button id="plaid-connect" class="primary">Connect institution</button>
+          </div>
+        </div>
+        <p class="muted" id="plaid-status"></p>
+        <div class="table-wrap"><table id="plaid-items"></table></div>
+      </div>
+    </section>
+
+    <section id="tab-plan" class="tab">
+      <div class="panel">
+        <div class="panel-head">
+          <div class="actions">
+            <select id="plan-select"></select>
+            <button id="plan-new" class="primary">New plan</button>
+            <button id="plan-dup">Duplicate</button>
+            <button id="plan-edit">Assumptions</button>
+            <button id="plan-delete" class="danger">Delete</button>
+          </div>
+        </div>
+        <p class="muted" id="plan-empty" hidden>Create a plan to project your finances through retirement.</p>
+      </div>
+      <div id="plan-body" hidden>
+        <div class="cards" id="plan-cards"></div>
+        <div class="panel" id="plan-warnings" hidden></div>
+        <div class="panel">
+          <h2>Investable assets (today's dollars)</h2>
+          <p class="muted">Line: expected path. Shaded: Monte Carlo 10th–90th and 25th–75th percentile ranges.</p>
+          <div class="chart-box tall"><canvas id="plan-chart"></canvas></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Income, expenses &amp; goals</h2>
+            <button id="cf-add" class="primary">Add item</button>
+          </div>
+          <p class="muted">Amounts are per year in today's dollars. Goals are one-time unless you set an end age.</p>
+          <div class="table-wrap"><table id="cf-table"></table></div>
+        </div>
+        <details class="panel">
+          <summary><h2>Year-by-year table</h2></summary>
+          <div class="table-wrap"><table id="years-table" class="dense"></table></div>
+        </details>
+      </div>
+    </section>
+
+    <section id="tab-compare" class="tab">
+      <div class="panel">
+        <h2>Compare scenarios</h2>
+        <p class="muted">Duplicate a plan on the Plan tab, change its assumptions, then compare here.</p>
+        <div id="compare-pick" class="pick"></div>
+        <div class="table-wrap"><table id="compare-table"></table></div>
+        <div class="chart-box tall"><canvas id="compare-chart"></canvas></div>
+      </div>
+    </section>
+
+    <section id="tab-debt" class="tab">
+      <div class="panel">
+        <h2>Debt payoff</h2>
+        <div class="actions">
+          <label>Extra per month <input type="number" id="debt-extra" value="0" min="0" step="50" /></label>
+          <label>Strategy
+            <select id="debt-strategy">
+              <option value="avalanche">Avalanche (highest rate first)</option>
+              <option value="snowball">Snowball (smallest balance first)</option>
+            </select>
+          </label>
+          <button id="debt-run" class="primary">Calculate</button>
+        </div>
+        <div class="cards" id="debt-cards"></div>
+        <div class="table-wrap"><table id="debt-table"></table></div>
+        <div class="chart-box"><canvas id="debt-chart"></canvas></div>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="form-dialog">
+    <form method="dialog" id="dialog-form">
+      <h2 id="dialog-title"></h2>
+      <div id="dialog-fields" class="fields"></div>
+      <p class="error" id="dialog-error"></p>
+      <div class="actions end">
+        <button value="cancel" formnovalidate>Cancel</button>
+        <button value="ok" class="primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" hidden></div>
+  <script src="/app.js"></script>
+</body>
+</html>

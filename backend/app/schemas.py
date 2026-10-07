@@ -1,0 +1,142 @@
+from datetime import date, datetime
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field
+
+AccountKind = Literal[
+    "cash", "brokerage", "retirement", "property", "other_asset", "credit_card", "loan", "mortgage", "other_liability"
+]
+TaxTreatment = Literal["taxable", "tax_deferred", "tax_free", "none"]
+CashFlowKind = Literal["income", "expense", "goal"]
+
+
+class AccountBase(BaseModel):
+    name: str = Field(min_length=1)
+    institution: str | None = None
+    kind: AccountKind
+    tax_treatment: TaxTreatment = "taxable"
+    interest_rate: float = Field(0.0, ge=0, le=1)
+    monthly_payment: float = Field(0.0, ge=0)
+    annual_contribution: float = Field(0.0, ge=0)
+
+
+class AccountCreate(AccountBase):
+    balance: float | None = None
+    as_of: date | None = None
+
+
+class AccountUpdate(BaseModel):
+    name: str | None = Field(None, min_length=1)
+    institution: str | None = None
+    kind: AccountKind | None = None
+    tax_treatment: TaxTreatment | None = None
+    interest_rate: float | None = Field(None, ge=0, le=1)
+    monthly_payment: float | None = Field(None, ge=0)
+    annual_contribution: float | None = Field(None, ge=0)
+    archived: bool | None = None
+
+
+class AccountOut(AccountBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    archived: bool
+    is_liability: bool
+    latest_balance: float
+    latest_as_of: date | None
+    linked: bool = False
+
+
+class BalanceIn(BaseModel):
+    balance: float
+    as_of: date | None = None
+
+
+class BalanceOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    account_id: int
+    as_of: date
+    balance: float
+
+
+class PlanBase(BaseModel):
+    name: str = Field(min_length=1)
+    birth_year: int = Field(ge=1900, le=2100)
+    retirement_age: int = Field(65, ge=18, le=100)
+    life_expectancy: int = Field(95, ge=30, le=120)
+    inflation: float = Field(0.025, ge=-0.05, le=0.2)
+    expected_return: float = Field(0.07, ge=-0.2, le=0.3)
+    retirement_return: float = Field(0.05, ge=-0.2, le=0.3)
+    return_volatility: float = Field(0.15, ge=0, le=1)
+    cash_return: float = Field(0.03, ge=-0.05, le=0.2)
+    effective_tax_rate: float = Field(0.15, ge=0, le=0.9)
+    withdrawal_rate: float = Field(0.04, gt=0, le=0.2)
+
+
+class PlanCreate(PlanBase):
+    pass
+
+
+class PlanUpdate(BaseModel):
+    name: str | None = Field(None, min_length=1)
+    birth_year: int | None = Field(None, ge=1900, le=2100)
+    retirement_age: int | None = Field(None, ge=18, le=100)
+    life_expectancy: int | None = Field(None, ge=30, le=120)
+    inflation: float | None = Field(None, ge=-0.05, le=0.2)
+    expected_return: float | None = Field(None, ge=-0.2, le=0.3)
+    retirement_return: float | None = Field(None, ge=-0.2, le=0.3)
+    return_volatility: float | None = Field(None, ge=0, le=1)
+    cash_return: float | None = Field(None, ge=-0.05, le=0.2)
+    effective_tax_rate: float | None = Field(None, ge=0, le=0.9)
+    withdrawal_rate: float | None = Field(None, gt=0, le=0.2)
+
+
+class CashFlowBase(BaseModel):
+    name: str = Field(min_length=1)
+    kind: CashFlowKind
+    amount: float = Field(ge=0)
+    start_age: int | None = Field(None, ge=0, le=120)
+    end_age: int | None = Field(None, ge=0, le=120)
+    ends_at_retirement: bool = False
+    starts_at_retirement: bool = False
+    real_growth: float = Field(0.0, ge=-0.2, le=0.2)
+    taxable: bool = True
+
+
+class CashFlowCreate(CashFlowBase):
+    pass
+
+
+class CashFlowUpdate(BaseModel):
+    name: str | None = Field(None, min_length=1)
+    kind: CashFlowKind | None = None
+    amount: float | None = Field(None, ge=0)
+    start_age: int | None = Field(None, ge=0, le=120)
+    end_age: int | None = Field(None, ge=0, le=120)
+    ends_at_retirement: bool | None = None
+    starts_at_retirement: bool | None = None
+    real_growth: float | None = Field(None, ge=-0.2, le=0.2)
+    taxable: bool | None = None
+
+
+class CashFlowOut(CashFlowBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    plan_id: int
+
+
+class PlanOut(PlanBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    created_at: datetime
+    cash_flows: list[CashFlowOut] = []
+
+
+class DebtPayoffRequest(BaseModel):
+    extra_monthly: float = Field(0.0, ge=0)
+    strategy: Literal["avalanche", "snowball"] = "avalanche"
+    account_ids: list[int] | None = None

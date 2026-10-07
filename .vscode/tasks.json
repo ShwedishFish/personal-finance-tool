@@ -1,0 +1,37 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Personal Finance: Dev Server",
+      "type": "shell",
+      "command": "./scripts/dev.sh",
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "uvicorn",
+        "pattern": { "regexp": "^__never__$" },
+        "background": {
+          "activesBegin": "Will watch for changes|Started reloader",
+          "beginsPattern": "Will watch for changes|Started reloader",
+          "endsPattern": "Application startup complete"
+        }
+      }
+    },
+    {
+      "label": "Personal Finance: Open Simple Browser",
+      "command": "${command:simpleBrowser.show}",
+      "args": ["http://127.0.0.1:8020/"]
+    },
+    {
+      "label": "Personal Finance: Dev Server + Simple Browser",
+      "dependsOrder": "sequence",
+      "dependsOn": ["Personal Finance: Dev Server", "Personal Finance: Open Simple Browser"],
+      "group": { "kind": "build", "isDefault": true }
+    },
+    {
+      "label": "Personal Finance: Tests",
+      "type": "shell",
+      "command": ".venv/bin/python -m pytest -q",
+      "group": "test"
+    }
+  ]
+}
