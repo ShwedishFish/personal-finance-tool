@@ -32,6 +32,13 @@ Your data lives in a SQLite file on your own machine.
   (and your spouse's); benefits are adjusted for claiming age 62–70. A lower-earning spouse gets
   the spousal benefit (up to half the partner's) when larger. **Compare claiming ages** reruns the
   whole plan for each age to find the one that best supports your plan.
+- **Couples and survivors** — the plan runs until the second death. After the first, the survivor
+  keeps the larger Social Security benefit, files as single, and spending drops to a share you set.
+- **Healthcare in retirement** — per-person costs for private insurance from retirement until
+  Medicare at 65, then Medicare-era costs, rising faster than inflation. Medicare IRMAA
+  surcharges are added automatically from your income two years earlier.
+- **When can you retire?** — reruns the plan for retirement ages around your choice and finds the
+  earliest age that reaches an 85% chance of success.
 - **Chance of success** — Monte Carlo simulation of market returns gives the probability your
   money lasts, with percentile bands.
 - **FI number & FI age** — when investable assets reach retirement spending ÷ safe withdrawal rate.
@@ -77,6 +84,9 @@ treat that file as sensitive.
 - "After tax" ending wealth counts 401k/IRA money net of a 22% tax your heirs would owe and
   unrealized gains net of 15%, so strategies that pay tax earlier compare fairly.
 - Kids' stage costs default to rough US averages; edit them to match your situation.
+- Simplifications for couples: accounts are pooled; after a death, RMDs use the survivor's age;
+  the survivor benefit is the deceased's benefit as claimed (no reduction for the survivor
+  claiming early); income items you enter (salary, pensions) continue as entered.
 - Monte Carlo draws yearly returns from a normal distribution (mean = your expected return,
   std. dev. = volatility). It is a planning aid, not a prediction.
 
@@ -93,8 +103,9 @@ tests/
 
 ## Roadmap ideas
 
-Survivor Social Security benefits, state tax brackets, pre-Medicare healthcare costs and IRMAA,
-historical-returns backtesting, transaction-based budgeting, and encrypting the local database.
+State tax brackets, ACA premium subsidies before Medicare, separate retirement ages for each
+spouse, historical-returns backtesting, transaction-based budgeting, and encrypting the local
+database.
 
 ## License
 

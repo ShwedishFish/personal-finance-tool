@@ -35,7 +35,10 @@ def test_plan_projection_uses_accounts_and_cash_flows(client):
                  annual_contribution=20_000)
     make_account(client, name="Mortgage", kind="mortgage", tax_treatment="none", balance=300_000,
                  interest_rate=0.06, monthly_payment=2_000)
-    plan = client.post("/api/plans", json={"name": "Base", "birth_year": date.today().year - 35}).json()
+    plan = client.post(
+        "/api/plans",
+        json={"name": "Base", "birth_year": date.today().year - 35, "pre_medicare_cost": 0, "medicare_cost": 0},
+    ).json()
     for cf in [
         {"name": "Salary", "kind": "income", "amount": 150_000, "ends_at_retirement": True},
         {"name": "Living", "kind": "expense", "amount": 60_000},

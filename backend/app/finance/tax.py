@@ -158,6 +158,12 @@ def _ordinary_parts(profile: TaxProfile, y: YearIncome) -> tuple[float, float]:
     return other + ss_taxable, standard_deduction(profile.filing_status, y.scale, y.people_65_plus)
 
 
+def adjusted_gross_income(profile: TaxProfile, y: YearIncome) -> float:
+    """AGI, which is also Medicare's MAGI for this model (it has no tax-exempt interest)."""
+    income, _ = _ordinary_parts(profile, y)
+    return income + y.capital_gains
+
+
 def ordinary_taxable_income(profile: TaxProfile, y: YearIncome) -> float:
     income, deduction = _ordinary_parts(profile, y)
     return max(0.0, income - deduction)

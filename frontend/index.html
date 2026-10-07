@@ -149,6 +149,30 @@
           </div>
         </div>
 
+        <div class="grid-2 even">
+          <div class="panel">
+            <div class="panel-head">
+              <h2>Healthcare in retirement</h2>
+              <div class="actions"><button id="health-edit">Edit</button></div>
+            </div>
+            <p class="muted">Per person: private insurance from retirement until Medicare at 65, then Medicare
+              premiums, supplemental coverage, and out-of-pocket costs. High incomes add Medicare surcharges (IRMAA),
+              based on income two years earlier.</p>
+            <div id="health-summary"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-head">
+              <h2>When can you retire?</h2>
+              <div class="actions"><button id="retire-explore">Compare retirement ages</button></div>
+            </div>
+            <p class="muted">Reruns your plan for retirement ages around your current choice, with the same simulated markets.</p>
+            <div id="retire-results" hidden>
+              <p id="retire-note"></p>
+              <div class="table-wrap"><table id="retire-table"></table></div>
+            </div>
+          </div>
+        </div>
+
         <div class="panel">
           <h2>Spending over time (today's dollars)</h2>
           <div class="chart-box tall"><canvas id="spending-chart"></canvas></div>

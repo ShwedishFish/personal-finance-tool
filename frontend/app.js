@@ -496,6 +496,14 @@ const ssFields = [
   { name: "spouse_birth_year", label: "Spouse birth year", type: "number", step: 1, help: "Optional" },
   { name: "spouse_ss_monthly_benefit", label: "Spouse's monthly benefit at FRA", type: "number", default: 0, help: "0 if no work history: a spousal benefit (up to half of yours) still applies" },
   { name: "spouse_ss_claim_age", label: "Spouse claims at age", type: "number", step: 1, default: 67 },
+  { name: "spouse_life_expectancy", label: "Plan until spouse's age", type: "number", step: 1, default: 95, help: "The plan runs until the second death" },
+  { name: "survivor_spending", label: "Spending after one spouse dies", type: "percent", default: 0.75, help: "Share of household spending that continues (kids and education excluded)" },
+];
+
+const healthFields = [
+  { name: "pre_medicare_cost", label: "Before Medicare, per person per year", type: "number", default: 12000, help: "Premiums + out-of-pocket from retirement until 65; 0 if covered (e.g. retiree plan)" },
+  { name: "medicare_cost", label: "On Medicare, per person per year", type: "number", default: 7000, help: "Part B, Part D, Medigap, out-of-pocket; IRMAA is added automatically" },
+  { name: "health_cost_growth", label: "Growth above inflation", type: "percent", default: 0.02, help: "Healthcare costs historically outpace inflation" },
 ];
 
 const ROTH_LABELS = {
@@ -527,6 +535,10 @@ async function loadPlans() {
 }
 
 const currentPlan = () => state.plans.find((p) => p.id === state.planId);
+const planEndAge = (plan) =>
+  plan.spouse_birth_year
+    ? Math.max(plan.life_expectancy, plan.spouse_life_expectancy + plan.spouse_birth_year - plan.birth_year)
+    : plan.life_expectancy;
 
 async function renderPlan() {
   const plan = currentPlan();
@@ -535,8 +547,10 @@ async function renderPlan() {
   if (state.ssPlanId !== plan.id) $("#ss-panel").hidden = true;
   if (state.rothPlanId !== plan.id) $("#roth-results").hidden = true;
   const proj = await api(`/api/plans/${plan.id}/projection?simulations=1000`);
+  if (state.retirePlanId !== plan.id) $("#retire-results").hidden = true;
   renderSocialSecurity(plan, proj);
   renderRoth(plan, proj);
+  renderHealth(plan, proj);
   renderSpendingChart(proj.years);
   const years = proj.years;
   const atRetirement = years.find((y) => y.age === plan.retirement_age) ?? years[0];
@@ -547,9 +561,9 @@ async function renderPlan() {
     card("FI number", money(proj.fi_number), `${pct(plan.withdrawal_rate)} of retirement spending`),
     card("FI age", proj.fi_age ?? "Not reached", "Expected path"),
     card(`At retirement (${plan.retirement_age})`, money(atRetirement?.investable_real), "Investable, today's dollars"),
-    card("Money lasts", proj.depletion_age ? `Until ${proj.depletion_age}` : `Past ${plan.life_expectancy}`, "Expected path", proj.depletion_age ? "bad" : "good"),
+    card("Money lasts", proj.depletion_age ? `Until ${proj.depletion_age}` : `Past ${proj.end_age}`, "Expected path, your age", proj.depletion_age ? "bad" : "good"),
     card("Lifetime taxes", money(proj.lifetime_taxes_real), "Today's dollars, expected path"),
-    card(`Left at ${plan.life_expectancy}, after tax`, money(proj.after_tax_ending_real), "Net of taxes heirs would owe, today's dollars"),
+    card("Left at end, after tax", money(proj.after_tax_ending_real), "Net of taxes heirs would owe, today's dollars"),
   ].join("");
 
   const warn = $("#plan-warnings");
@@ -577,15 +591,20 @@ async function renderPlan() {
     }),
   });
 
+  const hasSpouse = years.some((y) => y.spouse_age != null);
+  const ageCell = (y) => {
+    const fmt = (alive, a) => (alive ? a : `<span class="muted" title="Deceased in this plan">†</span>`);
+    return hasSpouse ? `${fmt(y.self_alive, y.age)} / ${fmt(y.spouse_alive, y.spouse_age)}` : y.age;
+  };
   $("#years-table").innerHTML = `
-    <tr><th>Year</th><th>Age</th><th class="num">Income</th><th class="num">Taxes</th><th class="num">Expenses</th>
+    <tr><th>Year</th><th>${hasSpouse ? "Ages (you / spouse)" : "Age"}</th><th class="num">Income</th><th class="num">Taxes</th><th class="num">Expenses</th>
     <th class="num">Goals</th><th class="num">Debt pmts</th><th class="num">Saved</th><th class="num">RMD</th><th class="num">Roth conv.</th><th class="num">Net flow</th>
     <th class="num">Investable</th><th class="num">Net worth</th><th class="num">Net worth (today's $)</th></tr>
     ${years.map((y) => `
       <tr class="${y.retired ? "retired" : ""}">
-        <td>${y.year}</td><td>${y.age}</td><td class="num">${money(y.income)}</td>
+        <td>${y.year}</td><td>${ageCell(y)}</td><td class="num">${money(y.income)}</td>
         <td class="num" title="Federal ${money(y.tax_federal)} · State ${money(y.tax_state)} · Payroll ${money(y.tax_fica)} · Early-withdrawal penalty ${money(y.tax_penalty)} · Capital gains realized ${money(y.realized_gains)}">${money(y.taxes)}</td>
-        <td class="num">${money(y.expenses)}</td>
+        <td class="num" title="${y.irmaa ? `Includes ${money(y.irmaa)} Medicare IRMAA surcharge` : ""}">${money(y.expenses)}</td>
         <td class="num" title="${esc(y.goal_names.join(", "))}">${y.goals ? money(y.goals) : "—"}</td>
         <td class="num">${y.debt_payments ? money(y.debt_payments) : "—"}</td>
         <td class="num">${y.contributions ? money(y.contributions) : "—"}</td>
@@ -637,7 +656,7 @@ function renderCashFlows(plan) {
   const endAge = (cf) => {
     if (cf.ends_at_retirement) return ret - 1;
     if (cf.end_age != null) return cf.end_age;
-    return cf.kind === "goal" ? startAge(cf) : plan.life_expectancy;
+    return cf.kind === "goal" ? startAge(cf) : planEndAge(plan);
   };
   const startText = (cf) => (cf.starts_at_retirement ? `Retirement (${ret})` : cf.start_age ?? "Now");
   const endText = (cf) => {
@@ -848,6 +867,69 @@ $("#roth-explore").addEventListener("click", guard(async () => {
     await api(`/api/plans/${plan.id}`, { method: "PATCH", body: { roth_conversion_rate: rate } });
     await loadPlans();
     $("#roth-explore").click();
+  });
+}));
+
+function renderHealth(plan, proj) {
+  const years = proj.years;
+  const real = (y, v) => v / (1 + plan.inflation) ** (y.age - years[0].age);
+  const total = years.reduce((s, y) => s + (y.expenses_by_category_real.healthcare ?? 0), 0);
+  const irmaa = years.reduce((s, y) => s + real(y, y.irmaa), 0);
+  const irmaaYears = years.filter((y) => y.irmaa > 0).length;
+  const people = plan.spouse_birth_year ? "each of you" : "you";
+  $("#health-summary").innerHTML = `
+    <table>
+      <tr><td>Before Medicare</td><td class="num">${money(plan.pre_medicare_cost)}/yr for ${people}</td></tr>
+      <tr><td>On Medicare</td><td class="num">${money(plan.medicare_cost)}/yr for ${people}</td></tr>
+      <tr><td>Growth above inflation</td><td class="num">${pct(plan.health_cost_growth)}</td></tr>
+      <tr><td>IRMAA surcharges</td><td class="num ${irmaa ? "warn" : ""}">${irmaa ? `${money(irmaa)} over ${irmaaYears} yrs` : "None"}</td></tr>
+      <tr class="subtotal"><td>Lifetime healthcare</td><td class="num">${money(total)}</td></tr>
+    </table>
+    <p class="muted">Today's dollars, expected path. Lifetime total includes any Healthcare spending items.</p>`;
+}
+
+$("#health-edit").addEventListener("click", () =>
+  openForm({
+    title: "Healthcare in retirement",
+    fields: healthFields,
+    values: currentPlan(),
+    onSubmit: async (v) => {
+      await api(`/api/plans/${state.planId}`, { method: "PATCH", body: v });
+      await loadPlans();
+    },
+  })
+);
+
+$("#retire-explore").addEventListener("click", guard(async () => {
+  const plan = currentPlan();
+  state.retirePlanId = plan.id;
+  $("#retire-results").hidden = false;
+  $("#retire-note").textContent = "";
+  $("#retire-table").innerHTML = `<tr><td class="muted">Running the plan for each retirement age…</td></tr>`;
+  const r = await api(`/api/plans/${plan.id}/retirement-ages`);
+  const first = r.options[0]?.retirement_age;
+  $("#retire-note").innerHTML = r.earliest_age == null
+    ? `<span class="bad">No age in this range reaches a ${pct(r.target, 0)} chance of success.</span>`
+    : `Earliest age with at least a ${pct(r.target, 0)} chance of success: <strong>${r.earliest_age}${r.earliest_age === first && first > new Date().getFullYear() - plan.birth_year ? " or earlier" : ""}</strong>.`;
+  $("#retire-table").innerHTML =
+    `<tr><th>Retire at</th><th class="num">Investable then</th><th class="num">Chance of success</th>
+     <th class="num">After-tax at end</th><th></th></tr>` +
+    r.options.map((o) => `
+      <tr class="${o.retirement_age === r.earliest_age ? "best" : ""}">
+        <td>${o.retirement_age}</td>
+        <td class="num">${money(o.investable_at_retirement_real)}</td>
+        <td class="num ${scoreClass(o.success_rate)}">${pct(o.success_rate, 0)}</td>
+        <td class="num">${money(o.after_tax_ending_real)}</td>
+        <td>${o.retirement_age === r.current_retirement_age ? '<span class="tag">current</span>'
+          : `<button class="link" data-age="${o.retirement_age}">Use this</button>`}</td>
+      </tr>`).join("") +
+    `<tr><td colspan="5" class="muted">Today's dollars.</td></tr>`;
+  $("#retire-table").onclick = guard(async (e) => {
+    const btn = e.target.closest("button[data-age]");
+    if (!btn) return;
+    await api(`/api/plans/${plan.id}`, { method: "PATCH", body: { retirement_age: Number(btn.dataset.age) } });
+    await loadPlans();
+    $("#retire-explore").click();
   });
 }));
 

@@ -121,6 +121,11 @@ class Plan(Base):
     spouse_birth_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
     spouse_ss_monthly_benefit: Mapped[float] = mapped_column(Float, default=0.0)
     spouse_ss_claim_age: Mapped[int] = mapped_column(Integer, default=67)
+    spouse_life_expectancy: Mapped[int] = mapped_column(Integer, default=95)
+    survivor_spending: Mapped[float] = mapped_column(Float, default=0.75)
+    pre_medicare_cost: Mapped[float] = mapped_column(Float, default=12_000)  # per person per year
+    medicare_cost: Mapped[float] = mapped_column(Float, default=7_000)  # per person per year, before IRMAA
+    health_cost_growth: Mapped[float] = mapped_column(Float, default=0.02)  # above inflation
     roth_conversion_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
     roth_start_age: Mapped[int | None] = mapped_column(Integer, nullable=True)
     roth_end_age: Mapped[int | None] = mapped_column(Integer, nullable=True)

@@ -243,6 +243,49 @@ def roth_conversion_comparison(
     }
 
 
+RETIREMENT_AGE_SPAN = 5
+
+
+@router.get("/plans/{plan_id}/retirement-ages")
+def retirement_age_comparison(
+    plan_id: int,
+    simulations: int = Query(300, ge=50, le=2000),
+    target: float = Query(0.85, gt=0, le=1),
+    session: Session = Depends(get_session),
+):
+    """Run the plan for retirement ages around the current choice; find the earliest that meets the target."""
+    plan = get_plan(session, plan_id)
+    accounts = active_accounts(session)
+    current_age = date.today().year - plan.birth_year
+    lo = max(current_age, plan.retirement_age - RETIREMENT_AGE_SPAN)
+    hi = plan.retirement_age + RETIREMENT_AGE_SPAN
+    limit = min(plan.life_expectancy - 1, plan.retirement_age + 2 * RETIREMENT_AGE_SPAN)
+    options = []
+    for age in range(lo, limit + 1):
+        if age > hi and any(o["success_rate"] >= target for o in options):
+            break
+        inp, _ = build_projection_input(plan, accounts, retirement_age=age)
+        rows = simulate(inp)
+        mc = monte_carlo(inp, simulations=simulations)
+        at_retirement = next((r for r in rows if r.age == age), None)
+        options.append(
+            {
+                "retirement_age": age,
+                "success_rate": mc["success_rate"],
+                "investable_at_retirement_real": at_retirement.investable_real if at_retirement else None,
+                "after_tax_ending_real": after_tax_ending_real(inp, rows),
+                "median_ending_real": mc["bands"][-1]["p50"] if mc["bands"] else 0.0,
+            }
+        )
+    earliest = next((o["retirement_age"] for o in options if o["success_rate"] >= target), None)
+    return {
+        "target": target,
+        "current_retirement_age": plan.retirement_age,
+        "earliest_age": earliest,
+        "options": options,
+    }
+
+
 @router.get("/plans/{plan_id}/projection")
 def plan_projection(
     plan_id: int,
@@ -254,6 +297,7 @@ def plan_projection(
     inp, warnings = build_projection_input(plan, active_accounts(session))
     result = project(inp, simulations=simulations, seed=seed)
     result["warnings"] = warnings
+    result["end_age"] = inp.end_age
     result["social_security"] = [
         {"name": f.name, "start_age": f.start_age, "annual": f.amount}
         for f in social_security_flows(plan, inp.current_age)

@@ -101,6 +101,11 @@ class PlanBase(BaseModel):
     spouse_birth_year: int | None = Field(None, ge=1900, le=2100)
     spouse_ss_monthly_benefit: float = Field(0.0, ge=0, le=20_000)
     spouse_ss_claim_age: int = Field(67, ge=62, le=70)
+    spouse_life_expectancy: int = Field(95, ge=30, le=120)
+    survivor_spending: float = Field(0.75, ge=0.2, le=1)
+    pre_medicare_cost: float = Field(12_000, ge=0, le=200_000)
+    medicare_cost: float = Field(7_000, ge=0, le=200_000)
+    health_cost_growth: float = Field(0.02, ge=-0.05, le=0.1)
     roth_conversion_rate: RothBracket | None = None
     roth_start_age: int | None = Field(None, ge=18, le=100)
     roth_end_age: int | None = Field(None, ge=18, le=100)
@@ -130,6 +135,11 @@ class PlanUpdate(BaseModel):
     spouse_birth_year: int | None = Field(None, ge=1900, le=2100)
     spouse_ss_monthly_benefit: float | None = Field(None, ge=0, le=20_000)
     spouse_ss_claim_age: int | None = Field(None, ge=62, le=70)
+    spouse_life_expectancy: int | None = Field(None, ge=30, le=120)
+    survivor_spending: float | None = Field(None, ge=0.2, le=1)
+    pre_medicare_cost: float | None = Field(None, ge=0, le=200_000)
+    medicare_cost: float | None = Field(None, ge=0, le=200_000)
+    health_cost_growth: float | None = Field(None, ge=-0.05, le=0.1)
     roth_conversion_rate: RothBracket | None = None
     roth_start_age: int | None = Field(None, ge=18, le=100)
     roth_end_age: int | None = Field(None, ge=18, le=100)

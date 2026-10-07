@@ -3,6 +3,7 @@ from datetime import date
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from .finance.medicare import MEDICARE_AGE
 from .finance.projection import DebtInput, FlowInput, ProjectionInput
 from .finance.social_security import annual_benefit, spousal_top_up
 from .models import Account, Child, Plan
@@ -37,19 +38,27 @@ def child_flows(child: Child, parent_birth_year: int) -> list[FlowInput]:
     return flows
 
 
+def plan_end_age(plan: Plan) -> int:
+    """Last year of the plan in the owner's age: the later of the two life expectancies."""
+    if not plan.spouse_birth_year:
+        return plan.life_expectancy
+    return max(plan.life_expectancy, plan.spouse_life_expectancy + plan.spouse_birth_year - plan.birth_year)
+
+
 def social_security_flows(plan: Plan, current_age: int, claim_age: int | None = None) -> list[FlowInput]:
     """Benefits for the plan owner and spouse, with start ages expressed in the owner's age."""
     my_claim = claim_age if claim_age is not None else plan.ss_claim_age
+    end = plan_end_age(plan)
     flows = []
 
-    def add(name: str, annual: float, start: int) -> None:
+    def add(name: str, annual: float, start: int, owner: str, spousal: bool = False) -> None:
         if annual > 0:
             flows.append(
-                FlowInput(name, "income", annual, max(start, current_age), plan.life_expectancy,
-                          tax_type="social_security")
+                FlowInput(name, "income", annual, max(start, current_age), end, tax_type="social_security",
+                          owner=owner, spousal=spousal)
             )
 
-    add("Social Security", annual_benefit(plan.ss_monthly_benefit, plan.birth_year, my_claim), my_claim)
+    add("Social Security", annual_benefit(plan.ss_monthly_benefit, plan.birth_year, my_claim), my_claim, "self")
     if not plan.spouse_birth_year:
         return flows
 
@@ -59,6 +68,7 @@ def social_security_flows(plan: Plan, current_age: int, claim_age: int | None = 
         "Social Security (spouse)",
         annual_benefit(plan.spouse_ss_monthly_benefit, plan.spouse_birth_year, plan.spouse_ss_claim_age),
         spouse_claim,
+        "spouse",
     )
     both_claimed = max(my_claim, spouse_claim)
     add(
@@ -66,12 +76,43 @@ def social_security_flows(plan: Plan, current_age: int, claim_age: int | None = 
         spousal_top_up(plan.spouse_ss_monthly_benefit, plan.ss_monthly_benefit, plan.spouse_birth_year,
                        plan.spouse_ss_claim_age),
         both_claimed,
+        "spouse",
+        spousal=True,
     )
     add(
         "Spousal benefit (you)",
         spousal_top_up(plan.ss_monthly_benefit, plan.spouse_ss_monthly_benefit, plan.birth_year, my_claim),
         both_claimed,
+        "self",
+        spousal=True,
     )
+    return flows
+
+
+def healthcare_flows(plan: Plan, current_age: int, retirement_age: int) -> list[FlowInput]:
+    """Per-person health costs from retirement: private insurance until Medicare, then Medicare-era costs.
+
+    Before retirement, coverage is assumed to come through work and be part of regular spending.
+    """
+    people = [("", "self", 0)]
+    if plan.spouse_birth_year:
+        people.append((" (spouse)", "spouse", plan.spouse_birth_year - plan.birth_year))
+    end = plan_end_age(plan)
+    flows = []
+    for suffix, owner, offset in people:
+        medicare_start = MEDICARE_AGE + offset  # in the owner's age
+        pre_start = max(retirement_age, current_age)
+        if plan.pre_medicare_cost > 0 and pre_start < medicare_start:
+            flows.append(
+                FlowInput(f"Health insurance before Medicare{suffix}", "expense", plan.pre_medicare_cost,
+                          pre_start, medicare_start - 1, plan.health_cost_growth, category="healthcare", owner=owner)
+            )
+        if plan.medicare_cost > 0:
+            flows.append(
+                FlowInput(f"Medicare premiums & out-of-pocket{suffix}", "expense", plan.medicare_cost,
+                          max(medicare_start, current_age), end, plan.health_cost_growth, category="healthcare",
+                          owner=owner)
+            )
     return flows
 
 
@@ -84,18 +125,21 @@ def build_projection_input(
     today: date | None = None,
     ss_claim_age: int | None = None,
     roth_rate: float | None | object = _PLAN,
+    retirement_age: int | None = None,
 ) -> tuple[ProjectionInput, list[str]]:
     today = today or date.today()
     current_age = today.year - plan.birth_year
+    retirement_age = plan.retirement_age if retirement_age is None else retirement_age
+    end_age = plan_end_age(plan)
     warnings: list[str] = []
     if current_age >= plan.life_expectancy:
         warnings.append("Life expectancy is not after your current age; the projection is empty.")
-    if plan.retirement_age < current_age:
+    if retirement_age < current_age:
         warnings.append("Retirement age is in the past; the plan treats you as already retired.")
 
     inp = ProjectionInput(
         current_age=current_age,
-        retirement_age=plan.retirement_age,
+        retirement_age=retirement_age,
         life_expectancy=plan.life_expectancy,
         start_year=today.year,
         inflation=plan.inflation,
@@ -109,6 +153,8 @@ def build_projection_input(
         state_tax_rate=plan.state_tax_rate,
         withdrawal_rate=plan.withdrawal_rate,
         spouse_current_age=today.year - plan.spouse_birth_year if plan.spouse_birth_year else None,
+        spouse_life_expectancy=plan.spouse_life_expectancy if plan.spouse_birth_year else None,
+        survivor_spending=plan.survivor_spending,
         roth_conversion_rate=plan.roth_conversion_rate if roth_rate is _PLAN else roth_rate,
         roth_start_age=plan.roth_start_age,
         roth_end_age=plan.roth_end_age,
@@ -143,15 +189,15 @@ def build_projection_input(
     inp.taxable_basis = taxable_basis
 
     for cf in plan.cash_flows:
-        start = plan.retirement_age if cf.starts_at_retirement else (cf.start_age if cf.start_age is not None else current_age)
+        start = retirement_age if cf.starts_at_retirement else (cf.start_age if cf.start_age is not None else current_age)
         if cf.ends_at_retirement:
-            end = plan.retirement_age - 1
+            end = retirement_age - 1
         elif cf.end_age is not None:
             end = cf.end_age
         elif cf.kind == "goal":
             end = start
         else:
-            end = plan.life_expectancy
+            end = end_age
         if end < start:
             warnings.append(f"'{cf.name}' ends before it starts and is ignored.")
             continue
@@ -164,6 +210,14 @@ def build_projection_input(
     for child in plan.children:
         inp.flows.extend(child_flows(child, plan.birth_year))
 
+    health = healthcare_flows(plan, current_age, retirement_age)
+    if health and any(cf.kind == "expense" and cf.category == "healthcare" for cf in plan.cash_flows):
+        warnings.append(
+            "You have a Healthcare spending item and retirement healthcare costs set under Healthcare; "
+            "they may overlap."
+        )
+    inp.flows.extend(health)
+
     ss_flows = social_security_flows(plan, current_age, ss_claim_age)
     if ss_flows and any(f.tax_type == "social_security" for f in inp.flows):
         warnings.append(
@@ -171,6 +225,6 @@ def build_projection_input(
         )
     inp.flows.extend(ss_flows)
 
-    if not any(f.kind == "expense" and f.category not in ("kids", "education") for f in inp.flows):
+    if not any(f.kind == "expense" and not f.owner and f.category not in ("kids", "education") for f in inp.flows):
         warnings.append("No living expenses are entered, so the plan cannot compute a FI number.")
     return inp, warnings

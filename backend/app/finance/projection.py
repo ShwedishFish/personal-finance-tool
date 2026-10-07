@@ -6,13 +6,15 @@ Each simulated year applies cash flows first, then investment growth.
 """
 
 import random
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 
+from .medicare import IRMAA_LOOKBACK_YEARS, MEDICARE_AGE, irmaa_surcharge
 from .tax import (
     EARLY_WITHDRAWAL_AGE,
     TaxBreakdown,
     TaxProfile,
     YearIncome,
+    adjusted_gross_income,
     bracket_ceiling,
     income_tax,
     ordinary_taxable_income,
@@ -24,6 +26,7 @@ HEIR_TAX_RATE = 0.22  # assumed tax on inherited 401k/IRA money, for after-tax c
 EMBEDDED_GAINS_RATE = 0.15  # assumed tax on unrealized gains, for after-tax comparisons
 
 TAX_TYPES = ("wages", "ordinary", "social_security", "tax_free")
+SURVIVOR_UNSCALED_CATEGORIES = ("kids", "education")
 
 
 @dataclass
@@ -37,6 +40,8 @@ class FlowInput:
     tax_type: str = "wages"  # income only; see TAX_TYPES
     category: str = "general"  # expenses only
     every_n_years: int = 1  # 1 = every year; e.g. 8 = a car every 8 years starting at start_age
+    owner: str = ""  # "self" | "spouse": the flow stops when that person dies; "" = household
+    spousal: bool = False  # Social Security spousal top-up, paid only while both spouses are alive
 
     def active(self, age: int) -> bool:
         if not (self.start_age <= age <= self.end_age):
@@ -69,6 +74,8 @@ class ProjectionInput:
     state_tax_rate: float = 0.0
     withdrawal_rate: float = 0.04
     spouse_current_age: int | None = None
+    spouse_life_expectancy: int | None = None  # in the spouse's age; None = outlives the plan
+    survivor_spending: float = 1.0  # share of household spending that continues after the first death
     cash: float = 0.0
     taxable: float = 0.0
     taxable_basis: float | None = None  # None = no unrealized gains
@@ -89,6 +96,18 @@ class ProjectionInput:
         return self.start_year - self.current_age
 
     @property
+    def has_spouse(self) -> bool:
+        return self.spouse_current_age is not None
+
+    @property
+    def end_age(self) -> int:
+        """Last year of the plan, in your age: the later of the two life expectancies."""
+        end = self.life_expectancy
+        if self.has_spouse and self.spouse_life_expectancy is not None:
+            end = max(end, self.spouse_life_expectancy + self.current_age - self.spouse_current_age)
+        return end
+
+    @property
     def tax_profile(self) -> TaxProfile:
         return TaxProfile(
             mode=self.tax_mode,
@@ -102,6 +121,10 @@ class ProjectionInput:
 class YearRow:
     year: int
     age: int
+    spouse_age: int | None
+    self_alive: bool
+    spouse_alive: bool | None
+    filing_status: str
     retired: bool
     investment_return: float
     income: float
@@ -114,6 +137,7 @@ class YearRow:
     goals: float
     debt_payments: float
     contributions: float
+    irmaa: float
     rmd: float
     roth_conversion: float
     realized_gains: float
@@ -136,7 +160,7 @@ class YearRow:
 
 
 def _years(inp: ProjectionInput) -> range:
-    return range(inp.current_age, inp.life_expectancy + 1)
+    return range(inp.current_age, inp.end_age + 1)
 
 
 def _mean_return(inp: ProjectionInput, age: int) -> float:
@@ -169,11 +193,14 @@ def simulate(inp: ProjectionInput, returns: list[float] | None = None) -> list[Y
     basis = inp.taxable if inp.taxable_basis is None else inp.taxable_basis
     other = inp.other_assets
     debts = [[d.balance, d.apr, d.monthly_payment] for d in inp.debts]
-    profile = inp.tax_profile
+    joint_profile = inp.tax_profile
+    single_profile = replace(joint_profile, filing_status="single")
     birth_year = inp.birth_year
+    spouse_birth_year = inp.start_year - inp.spouse_current_age if inp.has_spouse else None
     roth_start = inp.roth_start_age if inp.roth_start_age is not None else inp.retirement_age
     roth_end = inp.roth_end_age if inp.roth_end_age is not None else rmd_start_age(birth_year) - 1
     convert = inp.roth_conversion_rate is not None and inp.tax_mode == "progressive"
+    magi_history: list[float] = []
     rows: list[YearRow] = []
 
     for t, age in enumerate(_years(inp)):
@@ -182,7 +209,16 @@ def simulate(inp: ProjectionInput, returns: list[float] | None = None) -> list[Y
         r = returns[t] if returns is not None else _mean_return(inp, age)
         r = max(r, -0.95)
 
+        spouse_age = inp.spouse_current_age + t if inp.has_spouse else None
+        self_alive = age <= inp.life_expectancy
+        spouse_alive = inp.has_spouse and (inp.spouse_life_expectancy is None or spouse_age <= inp.spouse_life_expectancy)
+        widowed = inp.has_spouse and not (self_alive and spouse_alive)
+        alive = {"": True, "self": self_alive, "spouse": spouse_alive}
+        profile = single_profile if widowed else joint_profile
+        filing = profile.filing_status
+
         income_by_type = dict.fromkeys(TAX_TYPES, 0.0)
+        own_benefit = {"self": 0.0, "spouse": 0.0}
         expenses = goals = 0.0
         goal_names: list[str] = []
         by_category: dict[str, float] = {}
@@ -190,14 +226,29 @@ def simulate(inp: ProjectionInput, returns: list[float] | None = None) -> list[Y
             if not f.active(age):
                 continue
             nominal = f.amount * infl * (1 + f.real_growth) ** t
+            if f.kind == "income" and f.tax_type == "social_security" and f.owner in own_benefit:
+                if not f.spousal:
+                    own_benefit[f.owner] += nominal
+                elif not widowed:
+                    income_by_type["social_security"] += nominal
+                continue
+            if not alive.get(f.owner, True):
+                continue
             if f.kind == "income":
                 income_by_type[f.tax_type if f.tax_type in income_by_type else "ordinary"] += nominal
             elif f.kind == "goal":
                 goals += nominal
                 goal_names.append(f.name)
             else:
+                if widowed and not f.owner and f.category not in SURVIVOR_UNSCALED_CATEGORIES:
+                    nominal *= inp.survivor_spending
                 expenses += nominal
                 by_category[f.category] = by_category.get(f.category, 0.0) + nominal
+        # A surviving spouse keeps the larger of the two retirement benefits.
+        if widowed:
+            income_by_type["social_security"] += max(own_benefit.values())
+        else:
+            income_by_type["social_security"] += sum(own_benefit.values())
 
         c_deferred = 0.0 if retired else inp.contrib_tax_deferred * infl
         c_free = 0.0 if retired else inp.contrib_tax_free * infl
@@ -212,12 +263,15 @@ def simulate(inp: ProjectionInput, returns: list[float] | None = None) -> list[Y
             d[0] = owed - payment
             debt_payments += payment
 
-        rmd = required_minimum_distribution(deferred, age, birth_year)
+        if self_alive or not inp.has_spouse:
+            rmd = required_minimum_distribution(deferred, age, birth_year)
+        else:
+            rmd = required_minimum_distribution(deferred, spouse_age, spouse_birth_year)
         deferred -= rmd
-        people_65 = int(age >= 65)
-        if inp.filing_status == "married_joint" and inp.spouse_current_age is not None:
-            people_65 += int(inp.spouse_current_age + t >= 65)
-        early = age < EARLY_WITHDRAWAL_AGE
+        self_65 = self_alive and age >= MEDICARE_AGE
+        spouse_65 = bool(spouse_alive) and spouse_age >= MEDICARE_AGE
+        people_65 = int(self_65) + int(spouse_65 and filing == "married_joint")
+        early = (age if self_alive or not inp.has_spouse else spouse_age) < EARLY_WITHDRAWAL_AGE
         conversion = 0.0
 
         def year_income(extra_deferred: float = 0.0, gains: float = 0.0) -> YearIncome:
@@ -237,12 +291,22 @@ def simulate(inp: ProjectionInput, returns: list[float] | None = None) -> list[Y
             return income_tax(profile, year_income(extra_deferred, gains))
 
         if convert and roth_start <= age <= roth_end and deferred > 0:
-            ceiling = bracket_ceiling(inp.roth_conversion_rate, inp.filing_status, infl)
+            ceiling = bracket_ceiling(inp.roth_conversion_rate, filing, infl)
             for _ in range(4):  # taxable Social Security rises with conversions, so iterate
                 conversion = max(0.0, conversion + ceiling - ordinary_taxable_income(profile, year_income()))
             conversion = min(conversion, deferred)
             deferred -= conversion
             free += conversion
+
+        irmaa = 0.0
+        on_medicare = int(self_65) + int(spouse_65)
+        if on_medicare:
+            lookback = t - IRMAA_LOOKBACK_YEARS
+            # Before there is history, estimate from this year's income before withdrawals.
+            magi = magi_history[lookback] if lookback >= 0 else adjusted_gross_income(profile, year_income())
+            irmaa = irmaa_surcharge(magi, filing, on_medicare, infl)
+            expenses += irmaa
+            by_category["healthcare"] = by_category.get("healthcare", 0.0) + irmaa
 
         tax = tax_for()
         income = sum(income_by_type.values())
@@ -253,7 +317,7 @@ def simulate(inp: ProjectionInput, returns: list[float] | None = None) -> list[Y
         taxable += c_taxable
         basis += c_taxable
 
-        withdrawals = shortfall = realized = 0.0
+        withdrawals = shortfall = realized = drawn_deferred = 0.0
         if net >= 0:
             taxable += net
             basis += net
@@ -280,6 +344,7 @@ def simulate(inp: ProjectionInput, returns: list[float] | None = None) -> list[Y
                 gross = _gross_up(need, deferred, lambda g: tax_for(g, realized).total)
                 tax = tax_for(gross, realized)
                 deferred -= gross
+                drawn_deferred = gross
                 need -= gross - (tax.total - before)
                 withdrawals += gross
 
@@ -289,6 +354,7 @@ def simulate(inp: ProjectionInput, returns: list[float] | None = None) -> list[Y
             withdrawals += take
             if need > 1.0:
                 shortfall = need
+        magi_history.append(adjusted_gross_income(profile, year_income(drawn_deferred, realized)))
 
         cash *= 1 + inp.cash_return
         taxable *= 1 + r
@@ -304,6 +370,10 @@ def simulate(inp: ProjectionInput, returns: list[float] | None = None) -> list[Y
             YearRow(
                 year=inp.start_year + t,
                 age=age,
+                spouse_age=spouse_age,
+                self_alive=self_alive,
+                spouse_alive=spouse_alive if inp.has_spouse else None,
+                filing_status=filing,
                 retired=retired,
                 investment_return=r,
                 income=income,
@@ -316,6 +386,7 @@ def simulate(inp: ProjectionInput, returns: list[float] | None = None) -> list[Y
                 goals=goals,
                 debt_payments=debt_payments,
                 contributions=c_deferred + c_free + c_taxable,
+                irmaa=irmaa,
                 rmd=rmd,
                 roth_conversion=conversion,
                 realized_gains=realized,
