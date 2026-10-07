@@ -1,5 +1,7 @@
 from datetime import date
 
+import pytest
+
 
 def make_account(client, **body):
     resp = client.post("/api/accounts", json=body)
@@ -61,6 +63,59 @@ def test_duplicate_plan_copies_cash_flows(client):
     assert [cf["name"] for cf in copy["cash_flows"]] == ["Living"]
     client.patch(f"/api/plans/{copy['id']}", json={"retirement_age": 55})
     assert client.get(f"/api/plans/{plan['id']}").json()["retirement_age"] == 65
+
+
+def test_children_become_stage_expenses(client):
+    year = date.today().year
+    plan = client.post("/api/plans", json={"name": "Kids", "birth_year": year - 35}).json()
+    client.post(f"/api/plans/{plan['id']}/cash-flows", json={"name": "Spending", "kind": "expense", "amount": 50_000})
+    resp = client.post(
+        f"/api/plans/{plan['id']}/children",
+        json={"name": "Ava", "birth_year": year + 1, "cost_early": 20_000, "cost_middle": 10_000,
+              "cost_teen": 15_000, "college_cost": 30_000, "college_years": 4},
+    )
+    assert resp.status_code == 201
+    years = {y["age"]: y for y in client.get(f"/api/plans/{plan['id']}/projection?simulations=0").json()["years"]}
+    assert "kids" not in years[35]["expenses_by_category_real"]
+    assert years[36]["expenses_by_category_real"]["kids"] == pytest.approx(20_000)
+    assert years[36 + 6]["expenses_by_category_real"]["kids"] == pytest.approx(10_000)
+    assert years[36 + 18]["expenses_by_category_real"]["education"] == pytest.approx(30_000)
+    assert "education" not in years[36 + 22]["expenses_by_category_real"]
+
+    copy = client.post(f"/api/plans/{plan['id']}/duplicate").json()
+    assert [c["name"] for c in copy["children"]] == ["Ava"]
+
+
+def test_social_security_claiming_comparison(client):
+    year = date.today().year
+    make_account(client, name="IRA", kind="retirement", tax_treatment="tax_deferred", balance=600_000)
+    plan = client.post(
+        "/api/plans",
+        json={"name": "SS", "birth_year": year - 60, "retirement_age": 62, "ss_monthly_benefit": 2_500},
+    ).json()
+    client.post(f"/api/plans/{plan['id']}/cash-flows", json={"name": "Spending", "kind": "expense", "amount": 50_000})
+
+    proj = client.get(f"/api/plans/{plan['id']}/projection?simulations=0").json()
+    assert proj["social_security"] == [{"name": "Social Security", "start_age": 67, "annual": pytest.approx(30_000)}]
+
+    result = client.get(f"/api/plans/{plan['id']}/social-security?simulations=50").json()
+    ages = [o["claim_age"] for o in result["options"]]
+    assert ages == list(range(62, 71))
+    assert result["options"][0]["monthly_benefit"] == pytest.approx(1_750)
+    assert result["options"][-1]["monthly_benefit"] == pytest.approx(3_100)
+    assert result["best_claim_age"] in ages
+
+
+def test_social_security_comparison_requires_benefit(client):
+    plan = client.post("/api/plans", json={"name": "SS", "birth_year": 1980}).json()
+    assert client.get(f"/api/plans/{plan['id']}/social-security").status_code == 400
+
+
+def test_blank_fields_in_patch_do_not_clear_required_values(client):
+    plan = client.post("/api/plans", json={"name": "P", "birth_year": 1990, "spouse_birth_year": 1992}).json()
+    resp = client.patch(f"/api/plans/{plan['id']}", json={"retirement_age": None, "spouse_birth_year": None})
+    assert resp.status_code == 200
+    assert resp.json()["retirement_age"] == 65 and resp.json()["spouse_birth_year"] is None
 
 
 def test_debt_payoff_endpoint(client):

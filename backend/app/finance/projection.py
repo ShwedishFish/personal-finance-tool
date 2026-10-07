@@ -8,6 +8,10 @@ Each simulated year applies cash flows first, then investment growth.
 import random
 from dataclasses import asdict, dataclass, field
 
+from .tax import EARLY_WITHDRAWAL_AGE, TaxBreakdown, TaxProfile, income_tax, required_minimum_distribution
+
+TAX_TYPES = ("wages", "ordinary", "social_security", "tax_free")
+
 
 @dataclass
 class FlowInput:
@@ -17,7 +21,14 @@ class FlowInput:
     start_age: int
     end_age: int  # inclusive
     real_growth: float = 0.0
-    taxable: bool = True
+    tax_type: str = "wages"  # income only; see TAX_TYPES
+    category: str = "general"  # expenses only
+    every_n_years: int = 1  # 1 = every year; e.g. 8 = a car every 8 years starting at start_age
+
+    def active(self, age: int) -> bool:
+        if not (self.start_age <= age <= self.end_age):
+            return False
+        return (age - self.start_age) % max(self.every_n_years, 1) == 0
 
 
 @dataclass
@@ -39,8 +50,12 @@ class ProjectionInput:
     retirement_return: float = 0.05
     return_volatility: float = 0.15
     cash_return: float = 0.03
-    effective_tax_rate: float = 0.15
+    tax_mode: str = "progressive"
+    filing_status: str = "single"
+    effective_tax_rate: float = 0.15  # used when tax_mode == "flat"
+    state_tax_rate: float = 0.0
     withdrawal_rate: float = 0.04
+    spouse_current_age: int | None = None
     cash: float = 0.0
     taxable: float = 0.0
     tax_deferred: float = 0.0
@@ -52,6 +67,19 @@ class ProjectionInput:
     debts: list[DebtInput] = field(default_factory=list)
     flows: list[FlowInput] = field(default_factory=list)
 
+    @property
+    def birth_year(self) -> int:
+        return self.start_year - self.current_age
+
+    @property
+    def tax_profile(self) -> TaxProfile:
+        return TaxProfile(
+            mode=self.tax_mode,
+            filing_status=self.filing_status,
+            flat_rate=min(max(self.effective_tax_rate, 0.0), 0.95),
+            state_rate=self.state_tax_rate,
+        )
+
 
 @dataclass
 class YearRow:
@@ -61,10 +89,15 @@ class YearRow:
     investment_return: float
     income: float
     taxes: float
+    tax_federal: float
+    tax_state: float
+    tax_fica: float
+    tax_penalty: float
     expenses: float
     goals: float
     debt_payments: float
     contributions: float
+    rmd: float
     net_cash_flow: float
     withdrawals: float
     shortfall: float
@@ -79,6 +112,7 @@ class YearRow:
     investable_real: float
     net_worth_real: float
     goal_names: list[str] = field(default_factory=list)
+    expenses_by_category_real: dict[str, float] = field(default_factory=dict)
 
 
 def _years(inp: ProjectionInput) -> range:
@@ -93,7 +127,8 @@ def simulate(inp: ProjectionInput, returns: list[float] | None = None) -> list[Y
     cash, taxable, deferred, free = inp.cash, inp.taxable, inp.tax_deferred, inp.tax_free
     other = inp.other_assets
     debts = [[d.balance, d.apr, d.monthly_payment] for d in inp.debts]
-    tax_rate = min(max(inp.effective_tax_rate, 0.0), 0.95)
+    profile = inp.tax_profile
+    birth_year = inp.birth_year
     rows: list[YearRow] = []
 
     for t, age in enumerate(_years(inp)):
@@ -102,22 +137,22 @@ def simulate(inp: ProjectionInput, returns: list[float] | None = None) -> list[Y
         r = returns[t] if returns is not None else _mean_return(inp, age)
         r = max(r, -0.95)
 
-        income_taxed = income_untaxed = expenses = goals = 0.0
+        income_by_type = dict.fromkeys(TAX_TYPES, 0.0)
+        expenses = goals = 0.0
         goal_names: list[str] = []
+        by_category: dict[str, float] = {}
         for f in inp.flows:
-            if not (f.start_age <= age <= f.end_age):
+            if not f.active(age):
                 continue
             nominal = f.amount * infl * (1 + f.real_growth) ** t
             if f.kind == "income":
-                if f.taxable:
-                    income_taxed += nominal
-                else:
-                    income_untaxed += nominal
+                income_by_type[f.tax_type if f.tax_type in income_by_type else "ordinary"] += nominal
             elif f.kind == "goal":
                 goals += nominal
                 goal_names.append(f.name)
             else:
                 expenses += nominal
+                by_category[f.category] = by_category.get(f.category, 0.0) + nominal
 
         c_deferred = 0.0 if retired else inp.contrib_tax_deferred * infl
         c_free = 0.0 if retired else inp.contrib_tax_free * infl
@@ -132,9 +167,29 @@ def simulate(inp: ProjectionInput, returns: list[float] | None = None) -> list[Y
             d[0] = owed - payment
             debt_payments += payment
 
-        taxes = tax_rate * max(0.0, income_taxed - c_deferred)
-        income = income_taxed + income_untaxed
-        net = income - taxes - expenses - goals - debt_payments - c_deferred - c_free - c_taxable
+        rmd = required_minimum_distribution(deferred, age, birth_year)
+        deferred -= rmd
+        people_65 = int(age >= 65)
+        if inp.filing_status == "married_joint" and inp.spouse_current_age is not None:
+            people_65 += int(inp.spouse_current_age + t >= 65)
+        early = age < EARLY_WITHDRAWAL_AGE
+
+        def tax_for(extra_deferred: float) -> TaxBreakdown:
+            return income_tax(
+                profile,
+                wages=income_by_type["wages"],
+                ordinary=income_by_type["ordinary"],
+                social_security=income_by_type["social_security"],
+                pre_tax_contributions=c_deferred,
+                deferred_withdrawals=rmd + extra_deferred,
+                early_withdrawals=extra_deferred if early else 0.0,
+                scale=infl,
+                people_65_plus=people_65,
+            )
+
+        tax = tax_for(0.0)
+        income = sum(income_by_type.values())
+        net = income + rmd - tax.total - expenses - goals - debt_payments - c_deferred - c_free - c_taxable
 
         deferred += c_deferred
         free += c_free
@@ -145,29 +200,36 @@ def simulate(inp: ProjectionInput, returns: list[float] | None = None) -> list[Y
             taxable += net
         else:
             need = -net
-            for bucket in ("cash", "taxable", "tax_deferred", "tax_free"):
-                if need <= 0:
-                    break
-                if bucket == "cash":
-                    take = min(cash, need)
-                    cash -= take
-                    need -= take
-                elif bucket == "taxable":
-                    take = min(taxable, need)
-                    taxable -= take
-                    need -= take
-                elif bucket == "tax_deferred":
-                    gross = min(deferred, need / (1 - tax_rate))
-                    deferred -= gross
-                    taxes += gross * tax_rate
-                    need -= gross * (1 - tax_rate)
-                    take = gross
-                else:
-                    take = min(free, need)
-                    free -= take
-                    need -= take
-                withdrawals += take
-            if need > 0.01:
+            take = min(cash, need)
+            cash -= take
+            need -= take
+            withdrawals += take
+
+            take = min(taxable, need)
+            taxable -= take
+            need -= take
+            withdrawals += take
+
+            if need > 0 and deferred > 0:
+                base = tax.total
+                gross = need
+                for _ in range(30):
+                    nxt = need + tax_for(min(gross, deferred)).total - base
+                    if abs(nxt - gross) < 0.001:
+                        gross = nxt
+                        break
+                    gross = nxt
+                gross = min(gross, deferred)
+                tax = tax_for(gross)
+                deferred -= gross
+                need -= gross - (tax.total - base)
+                withdrawals += gross
+
+            take = min(free, max(need, 0.0))
+            free -= take
+            need -= take
+            withdrawals += take
+            if need > 1.0:
                 shortfall = need
 
         cash *= 1 + inp.cash_return
@@ -187,11 +249,16 @@ def simulate(inp: ProjectionInput, returns: list[float] | None = None) -> list[Y
                 retired=retired,
                 investment_return=r,
                 income=income,
-                taxes=taxes,
+                taxes=tax.total,
+                tax_federal=tax.federal,
+                tax_state=tax.state,
+                tax_fica=tax.fica,
+                tax_penalty=tax.penalty,
                 expenses=expenses,
                 goals=goals,
                 debt_payments=debt_payments,
                 contributions=c_deferred + c_free + c_taxable,
+                rmd=rmd,
                 net_cash_flow=net,
                 withdrawals=withdrawals,
                 shortfall=shortfall,
@@ -206,6 +273,7 @@ def simulate(inp: ProjectionInput, returns: list[float] | None = None) -> list[Y
                 investable_real=investable / deflator,
                 net_worth_real=net_worth / deflator,
                 goal_names=goal_names,
+                expenses_by_category_real={k: v / infl for k, v in by_category.items()},
             )
         )
     return rows
@@ -217,7 +285,7 @@ def fi_number(inp: ProjectionInput) -> float:
         return 0.0
     t = max(inp.retirement_age - inp.current_age, 0)
     spending = sum(
-        f.amount * (1 + f.real_growth) ** t
+        f.amount * (1 + f.real_growth) ** t / max(f.every_n_years, 1)
         for f in inp.flows
         if f.kind == "expense" and f.start_age <= inp.retirement_age <= f.end_age
     )
@@ -276,11 +344,13 @@ def project(inp: ProjectionInput, simulations: int = 1000, seed: int = 42) -> di
     target = fi_number(inp)
     fi_age = next((row.age for row in rows if target > 0 and row.investable_real >= target), None)
     depleted = next((row.age for row in rows if row.shortfall > 0), None)
-    result = {
+    return {
         "fi_number": target,
         "fi_age": fi_age,
         "depletion_age": depleted,
+        "lifetime_taxes_real": sum(
+            row.taxes / (1 + inp.inflation) ** (row.age - inp.current_age) for row in rows
+        ),
         "years": [asdict(row) for row in rows],
         "monte_carlo": monte_carlo(inp, simulations, seed) if simulations > 0 else None,
     }
-    return result

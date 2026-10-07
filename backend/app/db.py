@@ -1,7 +1,7 @@
 from collections.abc import Iterator
 from pathlib import Path
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -35,10 +35,54 @@ engine = make_engine(settings.database_url)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
 
+def apply_update(obj: Base, data: dict) -> None:
+    """Set fields from a PATCH body; nulls are only applied to nullable columns."""
+    columns = obj.__table__.columns
+    for key, value in data.items():
+        if value is None and not columns[key].nullable:
+            continue
+        setattr(obj, key, value)
+
+
+def _sql_literal(value) -> str:
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    if isinstance(value, (int, float)):
+        return repr(value)
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def upgrade_schema(bind) -> None:
+    """Bring an existing SQLite database up to the current models.
+
+    New columns are added with their scalar defaults. Renamed or removed columns
+    need an explicit data move below.
+    """
+    with bind.begin() as conn:
+        insp = inspect(conn)
+        for table in Base.metadata.sorted_tables:
+            existing = {c["name"] for c in insp.get_columns(table.name)}
+            for col in table.columns:
+                if col.name in existing:
+                    continue
+                ddl = f'ALTER TABLE "{table.name}" ADD COLUMN "{col.name}" {col.type.compile(bind.dialect)}'
+                if col.default is not None and col.default.is_scalar:
+                    ddl += f" DEFAULT {_sql_literal(col.default.arg)}"
+                conn.execute(text(ddl))
+
+            if table.name == "cash_flows" and "taxable" in existing:
+                conn.execute(text(
+                    "UPDATE cash_flows SET tax_type = CASE WHEN taxable THEN 'wages' ELSE 'tax_free' END"
+                ))
+                conn.execute(text("ALTER TABLE cash_flows DROP COLUMN taxable"))
+
+
 def init_db(bind=None) -> None:
     from . import models  # noqa: F401  (registers tables)
 
-    Base.metadata.create_all(bind=bind or engine)
+    bind = bind or engine
+    Base.metadata.create_all(bind=bind)
+    upgrade_schema(bind)
 
 
 def get_session() -> Iterator[Session]:

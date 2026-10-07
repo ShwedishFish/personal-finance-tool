@@ -16,7 +16,24 @@ const ASSET_CLASS_LABELS = {
   cash: "Cash", stocks: "Stocks", funds: "Funds", bonds: "Bonds", crypto: "Crypto",
   real_estate: "Real estate", unclassified_investments: "Investments (no holdings)", other: "Other",
 };
-const PALETTE = ["#2f6fde", "#1f9d55", "#c98a00", "#d64545", "#7b4fd6", "#0f9bb5", "#e0752d", "#6b7385"];
+const TAX_TYPE_LABELS = {
+  wages: "Wages (salary, self-employment)",
+  ordinary: "Other taxable (pension, rental, annuity)",
+  social_security: "Social Security",
+  tax_free: "Tax-free (gifts, inheritance)",
+};
+const CATEGORY_LABELS = {
+  general: "General spending", housing: "Housing (rent, property tax, HOA)", home_maintenance: "Home maintenance",
+  utilities: "Utilities", food: "Food & groceries", transportation: "Cars & transportation", healthcare: "Healthcare",
+  insurance: "Insurance", travel: "Travel", hobbies: "Hobbies & entertainment", kids: "Kids", education: "Education",
+  giving: "Giving", other: "Other",
+};
+const FILING_LABELS = { single: "Single", married_joint: "Married filing jointly" };
+const TAX_MODE_LABELS = { progressive: "2026 federal brackets + payroll tax", flat: "Single flat rate" };
+const PALETTE = [
+  "#2f6fde", "#1f9d55", "#c98a00", "#d64545", "#7b4fd6", "#0f9bb5", "#e0752d", "#6b7385",
+  "#b8418f", "#4a8f2a", "#8a6d3b", "#3d5a99", "#c4572b", "#2a9d8f",
+];
 
 const state = { planId: null, plans: [], charts: {} };
 
@@ -405,21 +422,64 @@ const planFields = [
   { name: "retirement_return", label: "Return in retirement", type: "percent", default: 0.05 },
   { name: "return_volatility", label: "Return volatility", type: "percent", default: 0.15, help: "Std. deviation used by Monte Carlo" },
   { name: "cash_return", label: "Cash interest", type: "percent", default: 0.03 },
-  { name: "effective_tax_rate", label: "Effective tax rate", type: "percent", default: 0.15 },
   { name: "withdrawal_rate", label: "Safe withdrawal rate", type: "percent", default: 0.04, help: "Used for the FI number" },
+  { name: "filing_status", label: "Filing status", type: "select", options: FILING_LABELS },
+  { name: "tax_mode", label: "Tax model", type: "select", options: TAX_MODE_LABELS },
+  { name: "state_tax_rate", label: "State income tax", type: "percent", default: 0, help: "Flat rate on taxable income" },
+  { name: "effective_tax_rate", label: "Flat tax rate", type: "percent", default: 0.15, help: "Only used by the flat model" },
 ];
 
-const flowFields = [
-  { name: "name", label: "Name", required: true, full: true },
-  { name: "kind", label: "Type", type: "select", options: FLOW_LABELS },
-  { name: "amount", label: "Amount per year", type: "number", required: true, help: "Today's dollars" },
+const timingFields = (growthHelp) => [
   { name: "start_age", label: "Start age", type: "number", step: 1, help: "Blank = now" },
   { name: "starts_at_retirement", label: "Starts at retirement", type: "checkbox" },
-  { name: "end_age", label: "End age", type: "number", step: 1, help: "Blank = end of plan (goals: one-time)" },
+  { name: "end_age", label: "End age", type: "number", step: 1, help: "Blank = end of plan" },
   { name: "ends_at_retirement", label: "Ends at retirement", type: "checkbox" },
-  { name: "real_growth", label: "Growth above inflation", type: "percent", default: 0, help: "e.g. raises" },
-  { name: "taxable", label: "Taxable income", type: "checkbox", default: true },
+  { name: "real_growth", label: "Growth above inflation", type: "percent", default: 0, help: growthHelp },
 ];
+
+const FLOW_FORMS = {
+  income: [
+    { name: "name", label: "Name", required: true, full: true },
+    { name: "amount", label: "Amount per year", type: "number", required: true, help: "Today's dollars, before tax" },
+    { name: "tax_type", label: "Tax treatment", type: "select", options: TAX_TYPE_LABELS },
+    ...timingFields("e.g. raises above inflation"),
+  ],
+  expense: [
+    { name: "name", label: "Name", required: true, full: true },
+    { name: "category", label: "Category", type: "select", options: CATEGORY_LABELS },
+    { name: "amount", label: "Amount", type: "number", required: true, help: "Today's dollars, each time it occurs" },
+    { name: "every_n_years", label: "Repeats every N years", type: "number", step: 1, default: 1, help: "1 = every year; 8 = a car every 8 years" },
+    ...timingFields("e.g. healthcare rising faster than inflation"),
+  ],
+  goal: [
+    { name: "name", label: "Name", required: true, full: true },
+    { name: "amount", label: "Amount", type: "number", required: true, help: "Today's dollars" },
+    { name: "start_age", label: "At age", type: "number", step: 1, required: true },
+    { name: "end_age", label: "Repeat yearly until age", type: "number", step: 1, help: "Blank = one-time" },
+    { name: "real_growth", label: "Growth above inflation", type: "percent", default: 0 },
+  ],
+};
+
+const childFields = [
+  { name: "name", label: "Name", required: true },
+  { name: "birth_year", label: "Birth year", type: "number", step: 1, required: true, default: new Date().getFullYear() },
+  { name: "cost_early", label: "Ages 0–5, per year", type: "number", default: 18000, help: "Include childcare" },
+  { name: "cost_middle", label: "Ages 6–12, per year", type: "number", default: 15000 },
+  { name: "cost_teen", label: "Ages 13–17, per year", type: "number", default: 18000 },
+  { name: "college_cost", label: "College, per year", type: "number", default: 30000, help: "0 = none" },
+  { name: "college_start_age", label: "College starts at age", type: "number", step: 1, default: 18 },
+  { name: "college_years", label: "Years of college", type: "number", step: 1, default: 4 },
+];
+
+const ssFields = [
+  { name: "ss_monthly_benefit", label: "Your monthly benefit at full retirement age", type: "number", default: 0, full: true, help: "From your statement at ssa.gov/myaccount, today's dollars" },
+  { name: "ss_claim_age", label: "You claim at age", type: "number", step: 1, default: 67, help: "62–70" },
+  { name: "spouse_birth_year", label: "Spouse birth year", type: "number", step: 1, help: "Optional" },
+  { name: "spouse_ss_monthly_benefit", label: "Spouse's monthly benefit at FRA", type: "number", default: 0 },
+  { name: "spouse_ss_claim_age", label: "Spouse claims at age", type: "number", step: 1, default: 67 },
+];
+
+const shortLabel = (label) => label.split(" (")[0];
 
 async function loadPlans() {
   state.plans = await api("/api/plans");
@@ -440,7 +500,11 @@ const currentPlan = () => state.plans.find((p) => p.id === state.planId);
 async function renderPlan() {
   const plan = currentPlan();
   renderCashFlows(plan);
+  renderChildren(plan);
+  if (state.ssPlanId !== plan.id) $("#ss-panel").hidden = true;
   const proj = await api(`/api/plans/${plan.id}/projection?simulations=1000`);
+  renderSocialSecurity(plan, proj);
+  renderSpendingChart(proj.years);
   const years = proj.years;
   const atRetirement = years.find((y) => y.age === plan.retirement_age) ?? years[0];
   const rate = proj.monte_carlo?.success_rate ?? 0;
@@ -451,6 +515,7 @@ async function renderPlan() {
     card("FI age", proj.fi_age ?? "Not reached", "Expected path"),
     card(`At retirement (${plan.retirement_age})`, money(atRetirement?.investable_real), "Investable, today's dollars"),
     card("Money lasts", proj.depletion_age ? `Until ${proj.depletion_age}` : `Past ${plan.life_expectancy}`, "Expected path", proj.depletion_age ? "bad" : "good"),
+    card("Lifetime taxes", money(proj.lifetime_taxes_real), "Today's dollars, expected path"),
   ].join("");
 
   const warn = $("#plan-warnings");
@@ -480,40 +545,43 @@ async function renderPlan() {
 
   $("#years-table").innerHTML = `
     <tr><th>Year</th><th>Age</th><th class="num">Income</th><th class="num">Taxes</th><th class="num">Expenses</th>
-    <th class="num">Goals</th><th class="num">Debt pmts</th><th class="num">Saved</th><th class="num">Net flow</th>
+    <th class="num">Goals</th><th class="num">Debt pmts</th><th class="num">Saved</th><th class="num">RMD</th><th class="num">Net flow</th>
     <th class="num">Investable</th><th class="num">Net worth</th><th class="num">Net worth (today's $)</th></tr>
     ${years.map((y) => `
       <tr class="${y.retired ? "retired" : ""}">
-        <td>${y.year}</td><td>${y.age}</td><td class="num">${money(y.income)}</td><td class="num">${money(y.taxes)}</td>
+        <td>${y.year}</td><td>${y.age}</td><td class="num">${money(y.income)}</td>
+        <td class="num" title="Federal ${money(y.tax_federal)} · State ${money(y.tax_state)} · Payroll ${money(y.tax_fica)} · Early-withdrawal penalty ${money(y.tax_penalty)}">${money(y.taxes)}</td>
         <td class="num">${money(y.expenses)}</td>
         <td class="num" title="${esc(y.goal_names.join(", "))}">${y.goals ? money(y.goals) : "—"}</td>
         <td class="num">${y.debt_payments ? money(y.debt_payments) : "—"}</td>
         <td class="num">${y.contributions ? money(y.contributions) : "—"}</td>
+        <td class="num">${y.rmd ? money(y.rmd) : "—"}</td>
         <td class="num ${y.shortfall ? "bad" : y.net_cash_flow < 0 ? "warn" : ""}">${money(y.net_cash_flow)}</td>
         <td class="num">${money(y.investable)}</td><td class="num">${money(y.net_worth)}</td>
         <td class="num">${money(y.net_worth_real)}</td>
       </tr>`).join("")}`;
 }
 
-function renderCashFlows(plan) {
-  const ret = plan.retirement_age;
-  const startText = (cf) => (cf.starts_at_retirement ? `Retirement (${ret})` : cf.start_age ?? "Now");
-  const endText = (cf) => {
-    if (cf.ends_at_retirement) return `Retirement (${ret - 1})`;
-    if (cf.end_age != null) return cf.end_age;
-    return cf.kind === "goal" ? "One-time" : "End of plan";
-  };
-  const table = $("#cf-table");
-  table.innerHTML = plan.cash_flows.length
-    ? `<tr><th>Name</th><th>Type</th><th class="num">Per year</th><th>Starts</th><th>Ends</th><th class="num">Real growth</th><th></th></tr>` +
-      plan.cash_flows.map((cf) => `
-        <tr><td>${esc(cf.name)}</td>
-          <td><span class="tag">${FLOW_LABELS[cf.kind]}</span>${cf.kind === "income" && !cf.taxable ? ' <span class="tag">untaxed</span>' : ""}</td>
-          <td class="num">${money(cf.amount)}</td><td>${startText(cf)}</td><td>${endText(cf)}</td>
-          <td class="num">${cf.real_growth ? pct(cf.real_growth) : "—"}</td>
-          <td><button class="link" data-act="edit" data-id="${cf.id}">Edit</button>
-              <button class="link danger" data-act="delete" data-id="${cf.id}">Delete</button></td></tr>`).join("")
-    : `<tr><td class="muted">Add your salary, living expenses, Social Security, and big goals like a house or college.</td></tr>`;
+function openFlowForm(kind, values = {}) {
+  const editing = values.id != null;
+  openForm({
+    title: editing ? `Edit ${values.name}` : `Add ${FLOW_LABELS[kind].toLowerCase()}`,
+    fields: FLOW_FORMS[kind],
+    values,
+    onSubmit: async (v) => {
+      if (editing) await api(`/api/cash-flows/${values.id}`, { method: "PATCH", body: v });
+      else await api(`/api/plans/${state.planId}/cash-flows`, { method: "POST", body: { ...v, kind } });
+      await loadPlans();
+    },
+  });
+}
+
+function flowActions(cf) {
+  return `<td><button class="link" data-act="edit" data-id="${cf.id}">Edit</button>
+    <button class="link danger" data-act="delete" data-id="${cf.id}">Delete</button></td>`;
+}
+
+function bindFlowTable(table, plan) {
   table.onclick = guard(async (e) => {
     const btn = e.target.closest("button[data-act]");
     if (!btn) return;
@@ -522,16 +590,187 @@ function renderCashFlows(plan) {
       await api(`/api/cash-flows/${cf.id}`, { method: "DELETE" });
       await loadPlans();
     } else {
-      openForm({
-        title: `Edit ${cf.name}`,
-        fields: flowFields,
-        values: cf,
-        onSubmit: async (v) => {
-          await api(`/api/cash-flows/${cf.id}`, { method: "PATCH", body: v });
-          await loadPlans();
-        },
-      });
+      openFlowForm(cf.kind, cf);
     }
+  });
+}
+
+function renderCashFlows(plan) {
+  const ret = plan.retirement_age;
+  const currentAge = new Date().getFullYear() - plan.birth_year;
+  const startAge = (cf) => (cf.starts_at_retirement ? ret : cf.start_age ?? currentAge);
+  const endAge = (cf) => {
+    if (cf.ends_at_retirement) return ret - 1;
+    if (cf.end_age != null) return cf.end_age;
+    return cf.kind === "goal" ? startAge(cf) : plan.life_expectancy;
+  };
+  const startText = (cf) => (cf.starts_at_retirement ? `Retirement (${ret})` : cf.start_age ?? "Now");
+  const endText = (cf) => {
+    if (cf.ends_at_retirement) return `Retirement (${ret - 1})`;
+    if (cf.end_age != null) return cf.end_age;
+    return cf.kind === "goal" ? "One-time" : "End of plan";
+  };
+
+  const incomeTable = $("#income-table");
+  const incomes = plan.cash_flows.filter((cf) => cf.kind !== "expense");
+  incomeTable.innerHTML = incomes.length
+    ? `<tr><th>Name</th><th>Type</th><th class="num">Amount</th><th>Starts</th><th>Ends</th><th class="num">Real growth</th><th></th></tr>` +
+      incomes.map((cf) => `
+        <tr><td>${esc(cf.name)}</td>
+          <td><span class="tag">${cf.kind === "goal" ? "Goal" : shortLabel(TAX_TYPE_LABELS[cf.tax_type])}</span></td>
+          <td class="num">${money(cf.amount)}</td><td>${startText(cf)}</td><td>${endText(cf)}</td>
+          <td class="num">${cf.real_growth ? pct(cf.real_growth) : "—"}</td>${flowActions(cf)}</tr>`).join("")
+    : `<tr><td class="muted">Add your salary, a pension, or rental income, and big goals like a house down payment.</td></tr>`;
+  bindFlowTable(incomeTable, plan);
+
+  const spendTable = $("#spending-table");
+  const expenses = plan.cash_flows.filter((cf) => cf.kind === "expense");
+  const perYearNow = expenses
+    .filter((cf) => startAge(cf) <= currentAge && currentAge <= endAge(cf))
+    .reduce((sum, cf) => sum + cf.amount / (cf.every_n_years || 1), 0);
+  $("#spending-total").textContent = expenses.length ? `About ${money(perYearNow)}/yr today (repeating items averaged)` : "";
+  spendTable.innerHTML = expenses.length
+    ? `<tr><th>Name</th><th>Category</th><th class="num">Amount</th><th>How often</th><th>Starts</th><th>Ends</th><th class="num">Real growth</th><th></th></tr>` +
+      expenses.map((cf) => `
+        <tr><td>${esc(cf.name)}</td><td><span class="tag">${shortLabel(CATEGORY_LABELS[cf.category])}</span></td>
+          <td class="num">${money(cf.amount)}</td>
+          <td>${cf.every_n_years > 1 ? `Every ${cf.every_n_years} yrs` : "Yearly"}</td>
+          <td>${startText(cf)}</td><td>${endText(cf)}</td>
+          <td class="num">${cf.real_growth ? pct(cf.real_growth) : "—"}</td>${flowActions(cf)}</tr>`).join("")
+    : `<tr><td class="muted">No spending yet. Start with General spending, or pick categories above.</td></tr>`;
+  bindFlowTable(spendTable, plan);
+}
+
+const CHIP_DEFAULTS = {
+  general: {}, transportation: { name: "Car replacement", every_n_years: 8 },
+  home_maintenance: { name: "Home maintenance" }, healthcare: { name: "Healthcare", real_growth: 0.02 },
+};
+
+$("#spending-chips").innerHTML = Object.entries(CATEGORY_LABELS)
+  .filter(([key]) => key !== "kids" && key !== "education")
+  .map(([key, label]) => `<button data-cat="${key}">+ ${esc(shortLabel(label))}</button>`).join("");
+$("#spending-chips").addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-cat]");
+  if (!btn) return;
+  const cat = btn.dataset.cat;
+  openFlowForm("expense", { category: cat, name: shortLabel(CATEGORY_LABELS[cat]), ...CHIP_DEFAULTS[cat] });
+});
+
+function renderChildren(plan) {
+  const table = $("#children-table");
+  const year = new Date().getFullYear();
+  table.innerHTML = plan.children.length
+    ? `<tr><th>Name</th><th>Age</th><th class="num">0–5</th><th class="num">6–12</th><th class="num">13–17</th><th>College</th><th></th></tr>` +
+      plan.children.map((c) => `
+        <tr><td>${esc(c.name)}</td><td>${c.birth_year > year ? `Born ${c.birth_year}` : year - c.birth_year}</td>
+          <td class="num">${money(c.cost_early)}</td><td class="num">${money(c.cost_middle)}</td><td class="num">${money(c.cost_teen)}</td>
+          <td>${c.college_cost && c.college_years ? `${money(c.college_cost)} × ${c.college_years} yrs` : "—"}</td>
+          <td><button class="link" data-act="edit" data-id="${c.id}">Edit</button>
+              <button class="link danger" data-act="delete" data-id="${c.id}">Delete</button></td></tr>`).join("")
+    : `<tr><td class="muted">No kids in this plan.</td></tr>`;
+  table.onclick = guard(async (e) => {
+    const btn = e.target.closest("button[data-act]");
+    if (!btn) return;
+    const child = plan.children.find((c) => c.id === Number(btn.dataset.id));
+    if (btn.dataset.act === "delete") {
+      await api(`/api/children/${child.id}`, { method: "DELETE" });
+      await loadPlans();
+      return;
+    }
+    openForm({
+      title: `Edit ${child.name}`,
+      fields: childFields,
+      values: child,
+      onSubmit: async (v) => {
+        await api(`/api/children/${child.id}`, { method: "PATCH", body: v });
+        await loadPlans();
+      },
+    });
+  });
+}
+
+$("#child-add").addEventListener("click", () =>
+  openForm({
+    title: "Add child",
+    fields: childFields,
+    onSubmit: async (v) => {
+      await api(`/api/plans/${state.planId}/children`, { method: "POST", body: v });
+      await loadPlans();
+    },
+  })
+);
+
+function renderSocialSecurity(plan, proj) {
+  $("#ss-compare").disabled = !plan.ss_monthly_benefit;
+  const box = $("#ss-summary");
+  if (!proj.social_security.length) {
+    box.innerHTML = `<p class="muted">Not set. Find your monthly benefit at full retirement age on your
+      <a href="https://www.ssa.gov/myaccount/" target="_blank" rel="noopener">ssa.gov statement</a>, then click Edit.</p>`;
+    return;
+  }
+  box.innerHTML = `<table>${proj.social_security.map((s) => `
+    <tr><td>${esc(s.name)}</td><td class="num">${money(s.annual / 12)}/mo</td><td>from your age ${s.start_age}</td></tr>`).join("")}
+    </table><p class="muted">Today's dollars, adjusted for claiming age. Benefits rise with inflation (COLA).</p>`;
+}
+
+$("#ss-edit").addEventListener("click", () =>
+  openForm({
+    title: "Social Security",
+    fields: ssFields,
+    values: currentPlan(),
+    onSubmit: async (v) => {
+      await api(`/api/plans/${state.planId}`, { method: "PATCH", body: v });
+      await loadPlans();
+    },
+  })
+);
+
+$("#ss-compare").addEventListener("click", guard(async () => {
+  const plan = currentPlan();
+  const panel = $("#ss-panel");
+  panel.hidden = false;
+  state.ssPlanId = plan.id;
+  $("#ss-table").innerHTML = `<tr><td class="muted">Running the plan for each claiming age…</td></tr>`;
+  const r = await api(`/api/plans/${plan.id}/social-security`);
+  const fra = Number.isInteger(r.full_retirement_age) ? r.full_retirement_age : r.full_retirement_age.toFixed(1);
+  $("#ss-note").textContent = `Full retirement age: ${fra}. Each row reruns your whole plan with the same simulated markets, so differences come only from the claiming age.`;
+  $("#ss-table").innerHTML =
+    `<tr><th>Claim at</th><th class="num">Monthly benefit</th><th class="num">Total through age ${plan.life_expectancy}</th>
+     <th class="num">Chance of success</th><th class="num">Median left at end</th><th></th></tr>` +
+    r.options.map((o) => `
+      <tr class="${o.claim_age === r.best_claim_age ? "best" : ""}">
+        <td>${o.claim_age}${o.claim_age === r.best_claim_age ? ' <span class="tag linked">best</span>' : ""}</td>
+        <td class="num">${money(o.monthly_benefit)}</td><td class="num">${money(o.lifetime_benefits)}</td>
+        <td class="num ${scoreClass(o.success_rate)}">${pct(o.success_rate, 0)}</td>
+        <td class="num">${money(o.median_ending_real)}</td>
+        <td>${o.claim_age === r.current_claim_age ? '<span class="tag">current</span>'
+          : `<button class="link" data-age="${o.claim_age}">Use this age</button>`}</td>
+      </tr>`).join("");
+  $("#ss-table").onclick = guard(async (e) => {
+    const btn = e.target.closest("button[data-age]");
+    if (!btn) return;
+    await api(`/api/plans/${plan.id}`, { method: "PATCH", body: { ss_claim_age: Number(btn.dataset.age) } });
+    await loadPlans();
+    $("#ss-compare").click();
+  });
+}));
+
+function renderSpendingChart(years) {
+  const cats = Object.keys(CATEGORY_LABELS).filter((c) => years.some((y) => y.expenses_by_category_real[c]));
+  drawChart("spending-chart", {
+    type: "bar",
+    data: {
+      labels: years.map((y) => y.age),
+      datasets: cats.map((c) => ({
+        label: shortLabel(CATEGORY_LABELS[c]),
+        data: years.map((y) => y.expenses_by_category_real[c] || 0),
+        backgroundColor: PALETTE[Object.keys(CATEGORY_LABELS).indexOf(c) % PALETTE.length],
+        stack: "spend",
+      })),
+    },
+    options: moneyChartOptions({
+      scales: { x: { stacked: true, title: { display: true, text: "Age" } }, y: { stacked: true, ticks: { callback: (v) => compact(v) } } },
+    }),
   });
 }
 
@@ -579,16 +818,8 @@ $("#plan-delete").addEventListener("click", guard(async () => {
   await loadPlans();
 }));
 
-$("#cf-add").addEventListener("click", () =>
-  openForm({
-    title: "Add income, expense, or goal",
-    fields: flowFields,
-    onSubmit: async (v) => {
-      await api(`/api/plans/${state.planId}/cash-flows`, { method: "POST", body: v });
-      await loadPlans();
-    },
-  })
-);
+$("#income-add").addEventListener("click", () => openFlowForm("income", { tax_type: "wages", ends_at_retirement: true }));
+$("#goal-add").addEventListener("click", () => openFlowForm("goal"));
 
 // ---------- compare ----------
 

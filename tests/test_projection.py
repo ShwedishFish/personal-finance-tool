@@ -15,6 +15,7 @@ def flat(**overrides) -> ProjectionInput:
         retirement_return=0.0,
         return_volatility=0.0,
         cash_return=0.0,
+        tax_mode="flat",
         effective_tax_rate=0.0,
     )
     base.update(overrides)
@@ -45,11 +46,48 @@ def test_withdrawal_order_and_depletion():
 
 
 def test_tax_deferred_withdrawals_are_grossed_up():
-    inp = flat(effective_tax_rate=0.15, tax_deferred=100_000, flows=[FlowInput("Living", "expense", 8_500, 40, 95)])
+    inp = flat(
+        current_age=62, retirement_age=62, life_expectancy=63, effective_tax_rate=0.15, tax_deferred=100_000,
+        flows=[FlowInput("Living", "expense", 8_500, 62, 95)],
+    )
     row = simulate(inp)[0]
-    assert row.withdrawals == pytest.approx(10_000)
-    assert row.taxes == pytest.approx(1_500)
-    assert row.tax_deferred == pytest.approx(90_000)
+    assert row.withdrawals == pytest.approx(10_000, abs=1)
+    assert row.taxes == pytest.approx(1_500, abs=1)
+    assert row.tax_deferred == pytest.approx(90_000, abs=1)
+    assert row.shortfall == 0
+
+
+def test_early_withdrawals_pay_penalty():
+    inp = flat(tax_deferred=100_000, flows=[FlowInput("Living", "expense", 9_000, 40, 95)])
+    row = simulate(inp)[0]
+    assert row.tax_penalty == pytest.approx(1_000, abs=1)
+    assert row.withdrawals == pytest.approx(10_000, abs=1)
+
+
+def test_progressive_withdrawal_covers_need_exactly():
+    inp = flat(
+        current_age=66, retirement_age=65, life_expectancy=67, tax_mode="progressive", state_tax_rate=0.05,
+        tax_deferred=2_000_000, flows=[FlowInput("Living", "expense", 120_000, 66, 95)],
+    )
+    row = simulate(inp)[0]
+    assert row.shortfall == 0
+    assert row.withdrawals - row.taxes == pytest.approx(120_000, abs=1)
+    assert row.tax_federal > 0 and row.tax_state > 0 and row.tax_fica == 0
+
+
+def test_rmds_are_forced_and_reinvested():
+    inp = flat(current_age=80, retirement_age=65, life_expectancy=80, start_year=2026, tax_deferred=202_000)
+    row = simulate(inp)[0]  # born 1946 -> RMDs started at 72; divisor at 80 is 20.2
+    assert row.rmd == pytest.approx(10_000)
+    assert row.taxable == pytest.approx(10_000)
+    assert row.tax_deferred == pytest.approx(192_000)
+
+
+def test_recurring_expense_every_n_years():
+    inp = flat(cash=200_000, flows=[FlowInput("Car", "expense", 30_000, 40, 95, category="transportation", every_n_years=3)])
+    rows = simulate(inp)
+    assert [r.expenses for r in rows] == [30_000, 0, 0, 30_000, 0, 0]
+    assert rows[0].expenses_by_category_real == {"transportation": 30_000}
 
 
 def test_contributions_stop_at_retirement_and_reduce_taxable_income():
@@ -66,7 +104,7 @@ def test_contributions_stop_at_retirement_and_reduce_taxable_income():
 
 
 def test_inflation_and_real_values():
-    inp = flat(inflation=0.10, cash=0, flows=[FlowInput("Gift", "income", 1_000, 41, 41, taxable=False)])
+    inp = flat(inflation=0.10, cash=0, flows=[FlowInput("Gift", "income", 1_000, 41, 41, tax_type="tax_free")])
     rows = simulate(inp)
     assert rows[1].income == pytest.approx(1_100)
     assert rows[1].investable_real == pytest.approx(1_100 / 1.21)

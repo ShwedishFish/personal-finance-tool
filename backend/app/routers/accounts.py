@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..db import get_session
+from ..db import apply_update, get_session
 from ..models import Account, BalanceSnapshot
 from ..schemas import AccountCreate, AccountOut, AccountUpdate, BalanceIn, BalanceOut
 
@@ -62,8 +62,7 @@ def create_account(body: AccountCreate, session: Session = Depends(get_session))
 @router.patch("/{account_id}", response_model=AccountOut)
 def update_account(account_id: int, body: AccountUpdate, session: Session = Depends(get_session)):
     acct = get_account(session, account_id)
-    for key, value in body.model_dump(exclude_unset=True).items():
-        setattr(acct, key, value)
+    apply_update(acct, body.model_dump(exclude_unset=True))
     session.commit()
     session.refresh(acct)
     return to_out(acct)

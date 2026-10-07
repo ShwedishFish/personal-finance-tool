@@ -10,9 +10,22 @@ Your data lives in a SQLite file on your own machine.
   property, and debts. Record balances over time and see net worth history and asset allocation.
 - **Bank sync (optional)** — link institutions through [Plaid](https://plaid.com/) to pull
   balances, investment holdings, and loan/credit-card rates automatically.
-- **Lifetime plan** — enter income, expenses, and one-time goals by age (salary until retirement,
-  Social Security from 67, a house down payment at 38…). The plan projects every year to your
-  life expectancy using your real account balances.
+- **Lifetime plan** — enter income and one-time goals by age (salary until retirement, a pension,
+  a house down payment at 38…). The plan projects every year to your life expectancy using your
+  real account balances.
+- **Spending your way** — one "General spending" bucket, or break it into categories (housing,
+  home maintenance, utilities, cars, healthcare, travel, hobbies…). Items can repeat every N years
+  (a car every 8 years) and grow faster than inflation (healthcare). A stacked chart shows
+  spending by category over your lifetime.
+- **Kids** — each child's yearly cost changes by life stage (0–5 with childcare, 6–12, 13–17),
+  then optional college years. Future children work too.
+- **Taxes** — 2026 federal brackets and standard deduction (single or married filing jointly),
+  payroll tax on wages, Social Security benefit taxation, a flat state rate, the 10% penalty on
+  401k/IRA withdrawals before 59½, and required minimum distributions. A single flat rate is
+  available instead.
+- **Social Security** — enter your benefit at full retirement age from your ssa.gov statement
+  (and your spouse's); benefits are adjusted for claiming age 62–70. **Compare claiming ages**
+  reruns the whole plan for each age to find the one that best supports your plan.
 - **Chance of success** — Monte Carlo simulation of market returns gives the probability your
   money lasts, with percentile bands.
 - **FI number & FI age** — when investable assets reach retirement spending ÷ safe withdrawal rate.
@@ -48,8 +61,12 @@ treat that file as sensitive.
 - All inputs are in **today's dollars**. Each year, flows are inflated, then:
   income − taxes − expenses − goals − debt payments − planned contributions = net cash flow.
 - Surpluses are invested in the taxable bucket. Shortfalls are withdrawn from cash, then taxable,
-  then tax-deferred (grossed up for taxes), then tax-free. If everything is empty, the plan fails.
-- Taxes use a single effective rate. Account contributions (set per account) stop at retirement.
+  then tax-deferred (grossed up so the after-tax amount covers the gap), then tax-free. If
+  everything is empty, the plan fails.
+- Tax brackets and the standard deduction rise with inflation. Withdrawals from taxable accounts
+  are treated as return of basis (no capital-gains tax yet). Account contributions (set per
+  account) stop at retirement; tax-deferred contributions reduce taxable wages.
+- Kids' stage costs default to rough US averages; edit them to match your situation.
 - Monte Carlo draws yearly returns from a normal distribution (mean = your expected return,
   std. dev. = volatility). It is a planning aid, not a prediction.
 
@@ -66,9 +83,9 @@ tests/
 
 ## Roadmap ideas
 
-Progressive tax brackets, Social Security claiming-age optimizer, Roth conversion explorer,
-required minimum distributions, historical-returns backtesting, CSV import, transaction-based
-budgeting, and encrypting the local database.
+Capital-gains tax on taxable withdrawals, Roth conversion explorer, spousal and survivor Social
+Security benefits, state tax brackets, pre-Medicare healthcare costs, historical-returns
+backtesting, CSV import, transaction-based budgeting, and encrypting the local database.
 
 ## License
 

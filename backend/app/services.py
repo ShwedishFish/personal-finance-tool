@@ -4,7 +4,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .finance.projection import DebtInput, FlowInput, ProjectionInput
-from .models import Account, Plan
+from .finance.social_security import annual_benefit
+from .models import Account, Child, Plan
 
 INVESTMENT_KINDS = {"brokerage", "retirement"}
 OTHER_ASSET_KINDS = {"property", "other_asset"}
@@ -14,7 +15,60 @@ def active_accounts(session: Session) -> list[Account]:
     return list(session.scalars(select(Account).where(Account.archived.is_(False)).order_by(Account.name)))
 
 
-def build_projection_input(plan: Plan, accounts: list[Account], today: date | None = None) -> tuple[ProjectionInput, list[str]]:
+CHILD_STAGES = (("ages 0–5", 0, 5, "cost_early"), ("ages 6–12", 6, 12, "cost_middle"), ("ages 13–17", 13, 17, "cost_teen"))
+
+
+def child_flows(child: Child, parent_birth_year: int) -> list[FlowInput]:
+    """Expense items for each life stage of a child, expressed in the plan owner's ages."""
+    offset = child.birth_year - parent_birth_year
+    flows = []
+    for label, lo, hi, attr in CHILD_STAGES:
+        cost = getattr(child, attr)
+        if cost > 0:
+            flows.append(FlowInput(f"{child.name}: {label}", "expense", cost, offset + lo, offset + hi, category="kids"))
+    if child.college_cost > 0 and child.college_years > 0:
+        start = offset + child.college_start_age
+        flows.append(
+            FlowInput(
+                f"{child.name}: college", "expense", child.college_cost, start, start + child.college_years - 1,
+                category="education",
+            )
+        )
+    return flows
+
+
+def social_security_flows(plan: Plan, current_age: int, claim_age: int | None = None) -> list[FlowInput]:
+    flows = []
+    if plan.ss_monthly_benefit > 0:
+        age = claim_age if claim_age is not None else plan.ss_claim_age
+        flows.append(
+            FlowInput(
+                "Social Security",
+                "income",
+                annual_benefit(plan.ss_monthly_benefit, plan.birth_year, age),
+                max(age, current_age),
+                plan.life_expectancy,
+                tax_type="social_security",
+            )
+        )
+    if plan.spouse_birth_year and plan.spouse_ss_monthly_benefit > 0:
+        offset = plan.spouse_birth_year - plan.birth_year
+        flows.append(
+            FlowInput(
+                "Social Security (spouse)",
+                "income",
+                annual_benefit(plan.spouse_ss_monthly_benefit, plan.spouse_birth_year, plan.spouse_ss_claim_age),
+                max(plan.spouse_ss_claim_age + offset, current_age),
+                plan.life_expectancy,
+                tax_type="social_security",
+            )
+        )
+    return flows
+
+
+def build_projection_input(
+    plan: Plan, accounts: list[Account], today: date | None = None, ss_claim_age: int | None = None
+) -> tuple[ProjectionInput, list[str]]:
     today = today or date.today()
     current_age = today.year - plan.birth_year
     warnings: list[str] = []
@@ -33,8 +87,12 @@ def build_projection_input(plan: Plan, accounts: list[Account], today: date | No
         retirement_return=plan.retirement_return,
         return_volatility=plan.return_volatility,
         cash_return=plan.cash_return,
+        tax_mode=plan.tax_mode,
+        filing_status=plan.filing_status,
         effective_tax_rate=plan.effective_tax_rate,
+        state_tax_rate=plan.state_tax_rate,
         withdrawal_rate=plan.withdrawal_rate,
+        spouse_current_age=today.year - plan.spouse_birth_year if plan.spouse_birth_year else None,
     )
 
     for acct in accounts:
@@ -73,8 +131,22 @@ def build_projection_input(plan: Plan, accounts: list[Account], today: date | No
         if end < start:
             warnings.append(f"'{cf.name}' ends before it starts and is ignored.")
             continue
-        inp.flows.append(FlowInput(cf.name, cf.kind, cf.amount, start, end, cf.real_growth, cf.taxable))
+        inp.flows.append(
+            FlowInput(
+                cf.name, cf.kind, cf.amount, start, end, cf.real_growth, cf.tax_type, cf.category, cf.every_n_years
+            )
+        )
 
-    if not any(f.kind == "expense" for f in inp.flows):
+    for child in plan.children:
+        inp.flows.extend(child_flows(child, plan.birth_year))
+
+    ss_flows = social_security_flows(plan, current_age, ss_claim_age)
+    if ss_flows and any(f.tax_type == "social_security" for f in inp.flows):
+        warnings.append(
+            "Social Security is set on the plan and also entered as an income item; it may be counted twice."
+        )
+    inp.flows.extend(ss_flows)
+
+    if not any(f.kind == "expense" and f.category not in ("kids", "education") for f in inp.flows):
         warnings.append("No living expenses are entered, so the plan cannot compute a FI number.")
     return inp, warnings

@@ -8,6 +8,13 @@ AccountKind = Literal[
 ]
 TaxTreatment = Literal["taxable", "tax_deferred", "tax_free", "none"]
 CashFlowKind = Literal["income", "expense", "goal"]
+TaxType = Literal["wages", "ordinary", "social_security", "tax_free"]
+TaxMode = Literal["progressive", "flat"]
+FilingStatus = Literal["single", "married_joint"]
+ExpenseCategory = Literal[
+    "general", "housing", "home_maintenance", "utilities", "food", "transportation", "healthcare",
+    "insurance", "travel", "hobbies", "kids", "education", "giving", "other",
+]
 
 
 class AccountBase(BaseModel):
@@ -71,8 +78,16 @@ class PlanBase(BaseModel):
     retirement_return: float = Field(0.05, ge=-0.2, le=0.3)
     return_volatility: float = Field(0.15, ge=0, le=1)
     cash_return: float = Field(0.03, ge=-0.05, le=0.2)
+    tax_mode: TaxMode = "progressive"
+    filing_status: FilingStatus = "single"
     effective_tax_rate: float = Field(0.15, ge=0, le=0.9)
+    state_tax_rate: float = Field(0.0, ge=0, le=0.2)
     withdrawal_rate: float = Field(0.04, gt=0, le=0.2)
+    ss_monthly_benefit: float = Field(0.0, ge=0, le=20_000)
+    ss_claim_age: int = Field(67, ge=62, le=70)
+    spouse_birth_year: int | None = Field(None, ge=1900, le=2100)
+    spouse_ss_monthly_benefit: float = Field(0.0, ge=0, le=20_000)
+    spouse_ss_claim_age: int = Field(67, ge=62, le=70)
 
 
 class PlanCreate(PlanBase):
@@ -89,8 +104,16 @@ class PlanUpdate(BaseModel):
     retirement_return: float | None = Field(None, ge=-0.2, le=0.3)
     return_volatility: float | None = Field(None, ge=0, le=1)
     cash_return: float | None = Field(None, ge=-0.05, le=0.2)
+    tax_mode: TaxMode | None = None
+    filing_status: FilingStatus | None = None
     effective_tax_rate: float | None = Field(None, ge=0, le=0.9)
+    state_tax_rate: float | None = Field(None, ge=0, le=0.2)
     withdrawal_rate: float | None = Field(None, gt=0, le=0.2)
+    ss_monthly_benefit: float | None = Field(None, ge=0, le=20_000)
+    ss_claim_age: int | None = Field(None, ge=62, le=70)
+    spouse_birth_year: int | None = Field(None, ge=1900, le=2100)
+    spouse_ss_monthly_benefit: float | None = Field(None, ge=0, le=20_000)
+    spouse_ss_claim_age: int | None = Field(None, ge=62, le=70)
 
 
 class CashFlowBase(BaseModel):
@@ -102,7 +125,9 @@ class CashFlowBase(BaseModel):
     ends_at_retirement: bool = False
     starts_at_retirement: bool = False
     real_growth: float = Field(0.0, ge=-0.2, le=0.2)
-    taxable: bool = True
+    tax_type: TaxType = "wages"
+    category: ExpenseCategory = "general"
+    every_n_years: int = Field(1, ge=1, le=50)
 
 
 class CashFlowCreate(CashFlowBase):
@@ -118,10 +143,45 @@ class CashFlowUpdate(BaseModel):
     ends_at_retirement: bool | None = None
     starts_at_retirement: bool | None = None
     real_growth: float | None = Field(None, ge=-0.2, le=0.2)
-    taxable: bool | None = None
+    tax_type: TaxType | None = None
+    category: ExpenseCategory | None = None
+    every_n_years: int | None = Field(None, ge=1, le=50)
 
 
 class CashFlowOut(CashFlowBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    plan_id: int
+
+
+class ChildBase(BaseModel):
+    name: str = Field(min_length=1)
+    birth_year: int = Field(ge=1900, le=2100)
+    cost_early: float = Field(18_000, ge=0)
+    cost_middle: float = Field(15_000, ge=0)
+    cost_teen: float = Field(18_000, ge=0)
+    college_cost: float = Field(30_000, ge=0)
+    college_start_age: int = Field(18, ge=14, le=30)
+    college_years: int = Field(4, ge=0, le=10)
+
+
+class ChildCreate(ChildBase):
+    pass
+
+
+class ChildUpdate(BaseModel):
+    name: str | None = Field(None, min_length=1)
+    birth_year: int | None = Field(None, ge=1900, le=2100)
+    cost_early: float | None = Field(None, ge=0)
+    cost_middle: float | None = Field(None, ge=0)
+    cost_teen: float | None = Field(None, ge=0)
+    college_cost: float | None = Field(None, ge=0)
+    college_start_age: int | None = Field(None, ge=14, le=30)
+    college_years: int | None = Field(None, ge=0, le=10)
+
+
+class ChildOut(ChildBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
@@ -134,6 +194,7 @@ class PlanOut(PlanBase):
     id: int
     created_at: datetime
     cash_flows: list[CashFlowOut] = []
+    children: list[ChildOut] = []
 
 
 class DebtPayoffRequest(BaseModel):

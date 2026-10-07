@@ -83,11 +83,55 @@
         </div>
         <div class="panel">
           <div class="panel-head">
-            <h2>Income, expenses &amp; goals</h2>
-            <button id="cf-add" class="primary">Add item</button>
+            <h2>Income &amp; goals</h2>
+            <div class="actions">
+              <button id="income-add">Add income</button>
+              <button id="goal-add">Add goal</button>
+            </div>
           </div>
-          <p class="muted">Amounts are per year in today's dollars. Goals are one-time unless you set an end age.</p>
-          <div class="table-wrap"><table id="cf-table"></table></div>
+          <p class="muted">Amounts are per year in today's dollars. Goals (a house, a wedding) are one-time unless you set an end age.</p>
+          <div class="table-wrap"><table id="income-table"></table></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Spending</h2>
+            <span class="muted" id="spending-total"></span>
+          </div>
+          <p class="muted">Use one <strong>General spending</strong> item, or break spending into categories. Items can repeat every few years (a car every 8 years, a roof every 20).</p>
+          <div class="chips" id="spending-chips"></div>
+          <div class="table-wrap"><table id="spending-table"></table></div>
+        </div>
+
+        <div class="grid-2 even">
+          <div class="panel">
+            <div class="panel-head">
+              <h2>Kids</h2>
+              <button id="child-add">Add child</button>
+            </div>
+            <p class="muted">Yearly cost changes by age, then college. Future children work too: enter the expected birth year.</p>
+            <div class="table-wrap"><table id="children-table"></table></div>
+          </div>
+          <div class="panel">
+            <div class="panel-head">
+              <h2>Social Security</h2>
+              <div class="actions">
+                <button id="ss-edit">Edit</button>
+                <button id="ss-compare">Compare claiming ages</button>
+              </div>
+            </div>
+            <div id="ss-summary"></div>
+          </div>
+        </div>
+        <div class="panel" id="ss-panel" hidden>
+          <h2>When should you claim Social Security?</h2>
+          <p class="muted" id="ss-note"></p>
+          <div class="table-wrap"><table id="ss-table"></table></div>
+        </div>
+
+        <div class="panel">
+          <h2>Spending over time (today's dollars)</h2>
+          <div class="chart-box tall"><canvas id="spending-chart"></canvas></div>
         </div>
         <details class="panel">
           <summary><h2>Year-by-year table</h2></summary>

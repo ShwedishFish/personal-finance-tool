@@ -16,10 +16,6 @@ ACCOUNT_KINDS = {
     "mortgage": True,
     "other_liability": True,
 }
-TAX_TREATMENTS = ("taxable", "tax_deferred", "tax_free", "none")
-CASH_FLOW_KINDS = ("income", "expense", "goal")
-
-
 def _now() -> datetime:
     return datetime.now()
 
@@ -114,12 +110,23 @@ class Plan(Base):
     retirement_return: Mapped[float] = mapped_column(Float, default=0.05)
     return_volatility: Mapped[float] = mapped_column(Float, default=0.15)
     cash_return: Mapped[float] = mapped_column(Float, default=0.03)
+    tax_mode: Mapped[str] = mapped_column(String, default="progressive")
+    filing_status: Mapped[str] = mapped_column(String, default="single")
     effective_tax_rate: Mapped[float] = mapped_column(Float, default=0.15)
+    state_tax_rate: Mapped[float] = mapped_column(Float, default=0.0)
     withdrawal_rate: Mapped[float] = mapped_column(Float, default=0.04)
+    ss_monthly_benefit: Mapped[float] = mapped_column(Float, default=0.0)
+    ss_claim_age: Mapped[int] = mapped_column(Integer, default=67)
+    spouse_birth_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    spouse_ss_monthly_benefit: Mapped[float] = mapped_column(Float, default=0.0)
+    spouse_ss_claim_age: Mapped[int] = mapped_column(Integer, default=67)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
     cash_flows: Mapped[list["CashFlow"]] = relationship(
         back_populates="plan", cascade="all, delete-orphan", order_by="CashFlow.start_age"
+    )
+    children: Mapped[list["Child"]] = relationship(
+        back_populates="plan", cascade="all, delete-orphan", order_by="Child.birth_year"
     )
 
 
@@ -136,6 +143,27 @@ class CashFlow(Base):
     ends_at_retirement: Mapped[bool] = mapped_column(Boolean, default=False)
     starts_at_retirement: Mapped[bool] = mapped_column(Boolean, default=False)
     real_growth: Mapped[float] = mapped_column(Float, default=0.0)
-    taxable: Mapped[bool] = mapped_column(Boolean, default=True)
+    tax_type: Mapped[str] = mapped_column(String, default="wages")
+    category: Mapped[str] = mapped_column(String, default="general")
+    every_n_years: Mapped[int] = mapped_column(Integer, default=1)
 
     plan: Mapped[Plan] = relationship(back_populates="cash_flows")
+
+
+class Child(Base):
+    """A child whose yearly cost changes by life stage, ending with optional college years."""
+
+    __tablename__ = "children"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    plan_id: Mapped[int] = mapped_column(ForeignKey("plans.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(String)
+    birth_year: Mapped[int] = mapped_column(Integer)
+    cost_early: Mapped[float] = mapped_column(Float, default=18_000)  # ages 0-5, incl. childcare
+    cost_middle: Mapped[float] = mapped_column(Float, default=15_000)  # ages 6-12
+    cost_teen: Mapped[float] = mapped_column(Float, default=18_000)  # ages 13-17
+    college_cost: Mapped[float] = mapped_column(Float, default=30_000)  # per year
+    college_start_age: Mapped[int] = mapped_column(Integer, default=18)
+    college_years: Mapped[int] = mapped_column(Integer, default=4)
+
+    plan: Mapped[Plan] = relationship(back_populates="children")
