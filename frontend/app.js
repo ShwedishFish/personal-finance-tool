@@ -112,7 +112,7 @@ function openForm({ title, fields, values = {}, onSubmit }) {
     if (f.type === "select") {
       input = document.createElement("select");
       for (const [value, text] of Object.entries(f.options)) input.add(new Option(text, value));
-      input.value = values[f.name] ?? f.default ?? Object.keys(f.options)[0];
+      input.value = String(values[f.name] ?? f.default ?? Object.keys(f.options)[0]);
     } else if (f.type === "checkbox") {
       label.classList.add("check");
       input = document.createElement("input");
@@ -146,7 +146,7 @@ function openForm({ title, fields, values = {}, onSubmit }) {
     const out = {};
     for (const [name, [f, input]] of Object.entries(inputs)) {
       if (f.type === "checkbox") out[name] = input.checked;
-      else if (f.type === "number") out[name] = input.value === "" ? null : Number(input.value);
+      else if (f.type === "number" || f.numeric) out[name] = input.value === "" ? null : Number(input.value);
       else if (f.type === "percent") out[name] = input.value === "" ? null : Number(input.value) / 100;
       else out[name] = input.value === "" ? null : input.value;
     }
@@ -259,6 +259,7 @@ const accountFields = (isNew) => [
   { name: "interest_rate", label: "Interest rate / APR", type: "percent", default: 0, help: "For debts" },
   { name: "monthly_payment", label: "Monthly payment", type: "number", default: 0, help: "For debts" },
   { name: "annual_contribution", label: "Yearly contribution", type: "number", default: 0, help: "Planned yearly savings into this account until retirement" },
+  { name: "cost_basis", label: "Cost basis", type: "number", help: "Taxable brokerage: what you paid in total. Blank = no gains" },
 ];
 
 async function loadAccounts() {
@@ -334,6 +335,24 @@ async function accountAction(act, acct) {
 }
 
 $("#show-archived").addEventListener("change", guard(loadAccounts));
+
+$("#import-csv").addEventListener("click", () => $("#csv-file").click());
+$("#csv-file").addEventListener("change", guard(async (e) => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  const r = await api("/api/import/balances", { method: "POST", body: { csv: await file.text() } });
+  const box = $("#import-result");
+  box.hidden = false;
+  box.innerHTML =
+    `Imported ${r.imported} balance(s)` +
+    (r.created_accounts.length ? `; created ${r.created_accounts.map(esc).join(", ")}` : "") +
+    (r.errors.length
+      ? `. <span class="bad">${r.errors.length} row(s) skipped:</span><br>` +
+        r.errors.slice(0, 10).map((err) => `Line ${err.line}: ${esc(err.message)}`).join("<br>")
+      : ".");
+  await loadAccounts();
+}));
 $("#add-account").addEventListener("click", () =>
   openForm({
     title: "Add account",
@@ -475,8 +494,20 @@ const ssFields = [
   { name: "ss_monthly_benefit", label: "Your monthly benefit at full retirement age", type: "number", default: 0, full: true, help: "From your statement at ssa.gov/myaccount, today's dollars" },
   { name: "ss_claim_age", label: "You claim at age", type: "number", step: 1, default: 67, help: "62–70" },
   { name: "spouse_birth_year", label: "Spouse birth year", type: "number", step: 1, help: "Optional" },
-  { name: "spouse_ss_monthly_benefit", label: "Spouse's monthly benefit at FRA", type: "number", default: 0 },
+  { name: "spouse_ss_monthly_benefit", label: "Spouse's monthly benefit at FRA", type: "number", default: 0, help: "0 if no work history: a spousal benefit (up to half of yours) still applies" },
   { name: "spouse_ss_claim_age", label: "Spouse claims at age", type: "number", step: 1, default: 67 },
+];
+
+const ROTH_LABELS = {
+  "": "No conversions", 0.12: "Fill the 12% bracket", 0.22: "Fill the 22% bracket",
+  0.24: "Fill the 24% bracket", 0.32: "Fill the 32% bracket",
+};
+const rothLabel = (rate) => ROTH_LABELS[rate ?? ""] ?? `Fill the ${pct(rate, 0)} bracket`;
+
+const rothFields = [
+  { name: "roth_conversion_rate", label: "Each year, convert enough to", type: "select", numeric: true, options: ROTH_LABELS, full: true },
+  { name: "roth_start_age", label: "From age", type: "number", step: 1, help: "Blank = retirement" },
+  { name: "roth_end_age", label: "Through age", type: "number", step: 1, help: "Blank = year before RMDs start" },
 ];
 
 const shortLabel = (label) => label.split(" (")[0];
@@ -502,8 +533,10 @@ async function renderPlan() {
   renderCashFlows(plan);
   renderChildren(plan);
   if (state.ssPlanId !== plan.id) $("#ss-panel").hidden = true;
+  if (state.rothPlanId !== plan.id) $("#roth-results").hidden = true;
   const proj = await api(`/api/plans/${plan.id}/projection?simulations=1000`);
   renderSocialSecurity(plan, proj);
+  renderRoth(plan, proj);
   renderSpendingChart(proj.years);
   const years = proj.years;
   const atRetirement = years.find((y) => y.age === plan.retirement_age) ?? years[0];
@@ -516,6 +549,7 @@ async function renderPlan() {
     card(`At retirement (${plan.retirement_age})`, money(atRetirement?.investable_real), "Investable, today's dollars"),
     card("Money lasts", proj.depletion_age ? `Until ${proj.depletion_age}` : `Past ${plan.life_expectancy}`, "Expected path", proj.depletion_age ? "bad" : "good"),
     card("Lifetime taxes", money(proj.lifetime_taxes_real), "Today's dollars, expected path"),
+    card(`Left at ${plan.life_expectancy}, after tax`, money(proj.after_tax_ending_real), "Net of taxes heirs would owe, today's dollars"),
   ].join("");
 
   const warn = $("#plan-warnings");
@@ -545,17 +579,18 @@ async function renderPlan() {
 
   $("#years-table").innerHTML = `
     <tr><th>Year</th><th>Age</th><th class="num">Income</th><th class="num">Taxes</th><th class="num">Expenses</th>
-    <th class="num">Goals</th><th class="num">Debt pmts</th><th class="num">Saved</th><th class="num">RMD</th><th class="num">Net flow</th>
+    <th class="num">Goals</th><th class="num">Debt pmts</th><th class="num">Saved</th><th class="num">RMD</th><th class="num">Roth conv.</th><th class="num">Net flow</th>
     <th class="num">Investable</th><th class="num">Net worth</th><th class="num">Net worth (today's $)</th></tr>
     ${years.map((y) => `
       <tr class="${y.retired ? "retired" : ""}">
         <td>${y.year}</td><td>${y.age}</td><td class="num">${money(y.income)}</td>
-        <td class="num" title="Federal ${money(y.tax_federal)} · State ${money(y.tax_state)} · Payroll ${money(y.tax_fica)} · Early-withdrawal penalty ${money(y.tax_penalty)}">${money(y.taxes)}</td>
+        <td class="num" title="Federal ${money(y.tax_federal)} · State ${money(y.tax_state)} · Payroll ${money(y.tax_fica)} · Early-withdrawal penalty ${money(y.tax_penalty)} · Capital gains realized ${money(y.realized_gains)}">${money(y.taxes)}</td>
         <td class="num">${money(y.expenses)}</td>
         <td class="num" title="${esc(y.goal_names.join(", "))}">${y.goals ? money(y.goals) : "—"}</td>
         <td class="num">${y.debt_payments ? money(y.debt_payments) : "—"}</td>
         <td class="num">${y.contributions ? money(y.contributions) : "—"}</td>
         <td class="num">${y.rmd ? money(y.rmd) : "—"}</td>
+        <td class="num">${y.roth_conversion ? money(y.roth_conversion) : "—"}</td>
         <td class="num ${y.shortfall ? "bad" : y.net_cash_flow < 0 ? "warn" : ""}">${money(y.net_cash_flow)}</td>
         <td class="num">${money(y.investable)}</td><td class="num">${money(y.net_worth)}</td>
         <td class="num">${money(y.net_worth_real)}</td>
@@ -752,6 +787,67 @@ $("#ss-compare").addEventListener("click", guard(async () => {
     await api(`/api/plans/${plan.id}`, { method: "PATCH", body: { ss_claim_age: Number(btn.dataset.age) } });
     await loadPlans();
     $("#ss-compare").click();
+  });
+}));
+
+function renderRoth(plan, proj) {
+  const converted = proj.years.reduce((sum, y) => sum + y.roth_conversion, 0);
+  const box = $("#roth-summary");
+  $("#roth-explore").disabled = plan.tax_mode === "flat";
+  if (plan.tax_mode === "flat") {
+    box.innerHTML = `<p class="warn">Roth conversions need the bracket tax model (Assumptions → Tax model).</p>`;
+    return;
+  }
+  box.innerHTML = plan.roth_conversion_rate == null
+    ? `<p>Current strategy: <strong>No conversions</strong>.</p>`
+    : `<p>Current strategy: <strong>${rothLabel(plan.roth_conversion_rate)}</strong> each year
+        ${plan.roth_start_age != null ? `from ${plan.roth_start_age}` : "from retirement"}
+        ${plan.roth_end_age != null ? `through ${plan.roth_end_age}` : "until RMDs start"},
+        converting ${money(converted)} in total (expected path, nominal).</p>`;
+}
+
+$("#roth-edit").addEventListener("click", () =>
+  openForm({
+    title: "Roth conversions",
+    fields: rothFields,
+    values: currentPlan(),
+    onSubmit: async (v) => {
+      await api(`/api/plans/${state.planId}`, { method: "PATCH", body: v });
+      await loadPlans();
+    },
+  })
+);
+
+$("#roth-explore").addEventListener("click", guard(async () => {
+  const plan = currentPlan();
+  state.rothPlanId = plan.id;
+  $("#roth-results").hidden = false;
+  $("#roth-table").innerHTML = `<tr><td class="muted">Running the plan for each strategy…</td></tr>`;
+  const r = await api(`/api/plans/${plan.id}/roth-conversions`);
+  $("#roth-note").textContent =
+    `Conversions run from age ${r.window[0]} through ${r.window[1]} on ${money(r.tax_deferred_balance)} of 401k/IRA money. ` +
+    `"After-tax at end" counts 401k/IRA money at ${pct(1 - r.heir_tax_rate, 0)} of face value (taxes your heirs would owe) ` +
+    `and taxes unrealized brokerage gains at ${pct(r.embedded_gains_rate, 0)}, so strategies compare fairly.`;
+  $("#roth-table").innerHTML =
+    `<tr><th>Strategy</th><th class="num">Converted</th><th class="num">Lifetime taxes</th>
+     <th class="num">After-tax at end</th><th class="num">Chance of success</th><th></th></tr>` +
+    r.options.map((o) => `
+      <tr class="${o.rate === r.best_rate ? "best" : ""}">
+        <td>${rothLabel(o.rate)}${o.rate === r.best_rate ? ' <span class="tag linked">best</span>' : ""}</td>
+        <td class="num">${money(o.total_converted_real)}</td><td class="num">${money(o.lifetime_taxes_real)}</td>
+        <td class="num">${money(o.after_tax_ending_real)}</td>
+        <td class="num ${scoreClass(o.success_rate)}">${pct(o.success_rate, 0)}</td>
+        <td>${o.rate === r.current_rate ? '<span class="tag">current</span>'
+          : `<button class="link" data-rate="${o.rate ?? ""}">Use this</button>`}</td>
+      </tr>`).join("") +
+    `<tr><td colspan="6" class="muted">All amounts in today's dollars.</td></tr>`;
+  $("#roth-table").onclick = guard(async (e) => {
+    const btn = e.target.closest("button[data-rate]");
+    if (!btn) return;
+    const rate = btn.dataset.rate === "" ? null : Number(btn.dataset.rate);
+    await api(`/api/plans/${plan.id}`, { method: "PATCH", body: { roth_conversion_rate: rate } });
+    await loadPlans();
+    $("#roth-explore").click();
   });
 }));
 

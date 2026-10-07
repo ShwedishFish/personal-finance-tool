@@ -83,6 +83,42 @@ def test_rmds_are_forced_and_reinvested():
     assert row.tax_deferred == pytest.approx(192_000)
 
 
+def test_taxable_withdrawals_realize_gains_and_reduce_basis():
+    inp = flat(
+        current_age=62, retirement_age=62, life_expectancy=62, effective_tax_rate=0.2,
+        taxable=100_000, taxable_basis=50_000, flows=[FlowInput("Living", "expense", 20_000, 62, 95)],
+    )
+    row = simulate(inp)[0]
+    assert row.withdrawals == pytest.approx(20_000 / 0.9, abs=1)
+    assert row.realized_gains == pytest.approx(row.withdrawals / 2, abs=1)
+    assert row.taxes == pytest.approx(0.2 * row.realized_gains, abs=1)
+    assert row.taxable_basis == pytest.approx(50_000 - row.withdrawals / 2, abs=1)
+    assert row.shortfall == 0
+
+
+def test_surplus_adds_to_basis():
+    inp = flat(taxable=10_000, taxable_basis=5_000, flows=[FlowInput("Salary", "income", 1_000, 40, 95)])
+    assert simulate(inp)[0].taxable_basis == pytest.approx(6_000)
+
+
+def test_roth_conversion_fills_bracket():
+    inp = flat(
+        current_age=66, retirement_age=65, life_expectancy=66, start_year=2026, tax_mode="progressive",
+        tax_deferred=1_000_000, cash=100_000, roth_conversion_rate=0.12,
+    )
+    row = simulate(inp)[0]
+    assert row.roth_conversion == pytest.approx(50_400 + 16_100 + 2_050, abs=1)
+    assert row.tax_federal == pytest.approx(1_240 + 38_000 * 0.12, abs=1)
+    assert row.tax_free == pytest.approx(row.roth_conversion)
+    assert row.cash == pytest.approx(100_000 - row.taxes)
+
+
+def test_roth_conversions_stop_before_rmds():
+    inp = flat(current_age=75, retirement_age=65, life_expectancy=75, start_year=2026, tax_mode="progressive",
+               tax_deferred=500_000, cash=100_000, roth_conversion_rate=0.22)
+    assert simulate(inp)[0].roth_conversion == 0
+
+
 def test_recurring_expense_every_n_years():
     inp = flat(cash=200_000, flows=[FlowInput("Car", "expense", 30_000, 40, 95, category="transportation", every_n_years=3)])
     rows = simulate(inp)

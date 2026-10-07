@@ -64,6 +64,12 @@ button, select, input {
   padding: 0.4rem 0.7rem; background: var(--panel); color: var(--text);
 }
 button { cursor: pointer; }
+a.button {
+  font-size: 0.875rem; border: 1px solid var(--border); border-radius: 6px; padding: 0.4rem 0.7rem;
+  color: var(--text); text-decoration: none; background: var(--panel);
+}
+a.button:hover { border-color: #c5cad3; }
+#import-result { margin-bottom: 0.75rem; }
 button:hover { border-color: #c5cad3; }
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 button.danger { color: var(--bad); }

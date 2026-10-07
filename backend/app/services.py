@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .finance.projection import DebtInput, FlowInput, ProjectionInput
-from .finance.social_security import annual_benefit
+from .finance.social_security import annual_benefit, spousal_top_up
 from .models import Account, Child, Plan
 
 INVESTMENT_KINDS = {"brokerage", "retirement"}
@@ -38,36 +38,52 @@ def child_flows(child: Child, parent_birth_year: int) -> list[FlowInput]:
 
 
 def social_security_flows(plan: Plan, current_age: int, claim_age: int | None = None) -> list[FlowInput]:
+    """Benefits for the plan owner and spouse, with start ages expressed in the owner's age."""
+    my_claim = claim_age if claim_age is not None else plan.ss_claim_age
     flows = []
-    if plan.ss_monthly_benefit > 0:
-        age = claim_age if claim_age is not None else plan.ss_claim_age
-        flows.append(
-            FlowInput(
-                "Social Security",
-                "income",
-                annual_benefit(plan.ss_monthly_benefit, plan.birth_year, age),
-                max(age, current_age),
-                plan.life_expectancy,
-                tax_type="social_security",
+
+    def add(name: str, annual: float, start: int) -> None:
+        if annual > 0:
+            flows.append(
+                FlowInput(name, "income", annual, max(start, current_age), plan.life_expectancy,
+                          tax_type="social_security")
             )
-        )
-    if plan.spouse_birth_year and plan.spouse_ss_monthly_benefit > 0:
-        offset = plan.spouse_birth_year - plan.birth_year
-        flows.append(
-            FlowInput(
-                "Social Security (spouse)",
-                "income",
-                annual_benefit(plan.spouse_ss_monthly_benefit, plan.spouse_birth_year, plan.spouse_ss_claim_age),
-                max(plan.spouse_ss_claim_age + offset, current_age),
-                plan.life_expectancy,
-                tax_type="social_security",
-            )
-        )
+
+    add("Social Security", annual_benefit(plan.ss_monthly_benefit, plan.birth_year, my_claim), my_claim)
+    if not plan.spouse_birth_year:
+        return flows
+
+    offset = plan.spouse_birth_year - plan.birth_year
+    spouse_claim = plan.spouse_ss_claim_age + offset  # in the owner's age
+    add(
+        "Social Security (spouse)",
+        annual_benefit(plan.spouse_ss_monthly_benefit, plan.spouse_birth_year, plan.spouse_ss_claim_age),
+        spouse_claim,
+    )
+    both_claimed = max(my_claim, spouse_claim)
+    add(
+        "Spousal benefit (spouse)",
+        spousal_top_up(plan.spouse_ss_monthly_benefit, plan.ss_monthly_benefit, plan.spouse_birth_year,
+                       plan.spouse_ss_claim_age),
+        both_claimed,
+    )
+    add(
+        "Spousal benefit (you)",
+        spousal_top_up(plan.ss_monthly_benefit, plan.spouse_ss_monthly_benefit, plan.birth_year, my_claim),
+        both_claimed,
+    )
     return flows
 
 
+_PLAN = object()  # sentinel: use the plan's own Roth conversion setting
+
+
 def build_projection_input(
-    plan: Plan, accounts: list[Account], today: date | None = None, ss_claim_age: int | None = None
+    plan: Plan,
+    accounts: list[Account],
+    today: date | None = None,
+    ss_claim_age: int | None = None,
+    roth_rate: float | None | object = _PLAN,
 ) -> tuple[ProjectionInput, list[str]]:
     today = today or date.today()
     current_age = today.year - plan.birth_year
@@ -93,7 +109,13 @@ def build_projection_input(
         state_tax_rate=plan.state_tax_rate,
         withdrawal_rate=plan.withdrawal_rate,
         spouse_current_age=today.year - plan.spouse_birth_year if plan.spouse_birth_year else None,
+        roth_conversion_rate=plan.roth_conversion_rate if roth_rate is _PLAN else roth_rate,
+        roth_start_age=plan.roth_start_age,
+        roth_end_age=plan.roth_end_age,
     )
+    if inp.roth_conversion_rate is not None and plan.tax_mode == "flat":
+        warnings.append("Roth conversions need the bracket tax model; they are skipped with a flat rate.")
+    taxable_basis = 0.0
 
     for acct in accounts:
         balance = acct.latest_balance
@@ -116,7 +138,9 @@ def build_projection_input(
             inp.contrib_tax_free += acct.annual_contribution
         else:
             inp.taxable += balance
+            taxable_basis += balance if acct.cost_basis is None else acct.cost_basis
             inp.contrib_taxable += acct.annual_contribution
+    inp.taxable_basis = taxable_basis
 
     for cf in plan.cash_flows:
         start = plan.retirement_age if cf.starts_at_retirement else (cf.start_age if cf.start_age is not None else current_age)

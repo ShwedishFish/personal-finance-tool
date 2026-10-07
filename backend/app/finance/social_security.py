@@ -36,3 +36,16 @@ def claiming_factor(birth_year: int, claim_age: int) -> float:
 
 def annual_benefit(monthly_at_fra: float, birth_year: int, claim_age: int) -> float:
     return monthly_at_fra * 12 * claiming_factor(birth_year, claim_age)
+
+
+def spousal_factor(birth_year: int, claim_age: int) -> float:
+    """Spousal benefits shrink when claimed early but earn no delayed credits after full retirement age."""
+    early = max(0, full_retirement_age_months(birth_year) - max(claim_age, EARLIEST_CLAIM_AGE) * 12)
+    first = min(early, 36)
+    return 1 - first * (25 / 36) / 100 - (early - first) * (5 / 12) / 100
+
+
+def spousal_top_up(own_monthly_at_fra: float, partner_monthly_at_fra: float, birth_year: int, claim_age: int) -> float:
+    """Yearly amount added to a person's own benefit, up to half of their partner's full benefit."""
+    excess = max(0.0, 0.5 * partner_monthly_at_fra - own_monthly_at_fra)
+    return excess * 12 * spousal_factor(birth_year, claim_age)

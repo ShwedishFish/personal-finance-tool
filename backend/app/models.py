@@ -44,6 +44,7 @@ class Account(Base):
     interest_rate: Mapped[float] = mapped_column(Float, default=0.0)
     monthly_payment: Mapped[float] = mapped_column(Float, default=0.0)
     annual_contribution: Mapped[float] = mapped_column(Float, default=0.0)
+    cost_basis: Mapped[float | None] = mapped_column(Float, nullable=True)
     archived: Mapped[bool] = mapped_column(Boolean, default=False)
     plaid_account_id: Mapped[str | None] = mapped_column(String, unique=True, nullable=True)
     plaid_item_id: Mapped[int | None] = mapped_column(
@@ -120,6 +121,9 @@ class Plan(Base):
     spouse_birth_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
     spouse_ss_monthly_benefit: Mapped[float] = mapped_column(Float, default=0.0)
     spouse_ss_claim_age: Mapped[int] = mapped_column(Integer, default=67)
+    roth_conversion_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
+    roth_start_age: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    roth_end_age: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
     cash_flows: Mapped[list["CashFlow"]] = relationship(

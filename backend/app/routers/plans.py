@@ -5,7 +5,16 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..db import apply_update, get_session
-from ..finance.projection import monte_carlo, project, simulate
+from ..finance.projection import (
+    EMBEDDED_GAINS_RATE,
+    HEIR_TAX_RATE,
+    after_tax_ending_real,
+    lifetime_taxes_real,
+    monte_carlo,
+    project,
+    simulate,
+)
+from ..finance.tax import rmd_start_age
 from ..finance.social_security import (
     EARLIEST_CLAIM_AGE,
     LATEST_CLAIM_AGE,
@@ -183,6 +192,57 @@ def social_security_comparison(
     }
 
 
+ROTH_STRATEGIES = (None, 0.12, 0.22, 0.24, 0.32)
+ROTH_SUCCESS_TOLERANCE = 0.02
+
+
+@router.get("/plans/{plan_id}/roth-conversions")
+def roth_conversion_comparison(
+    plan_id: int,
+    simulations: int = Query(300, ge=50, le=2000),
+    session: Session = Depends(get_session),
+):
+    """Compare no conversions with filling each bracket every year in the conversion window."""
+    plan = get_plan(session, plan_id)
+    if plan.tax_mode == "flat":
+        raise HTTPException(400, "Roth conversions need the bracket tax model. Change it under Assumptions.")
+    accounts = active_accounts(session)
+    options = []
+    for rate in ROTH_STRATEGIES:
+        inp, _ = build_projection_input(plan, accounts, roth_rate=rate)
+        rows = simulate(inp)
+        mc = monte_carlo(inp, simulations=simulations)
+        options.append(
+            {
+                "rate": rate,
+                "total_converted_real": sum(
+                    r.roth_conversion / (1 + inp.inflation) ** (r.age - inp.current_age) for r in rows
+                ),
+                "lifetime_taxes_real": lifetime_taxes_real(inp, rows),
+                "after_tax_ending_real": after_tax_ending_real(inp, rows),
+                "success_rate": mc["success_rate"],
+                "median_ending_real": mc["bands"][-1]["p50"] if mc["bands"] else 0.0,
+            }
+        )
+    # Success rates within a couple of points are Monte Carlo noise at these simulation counts.
+    top_success = max(o["success_rate"] for o in options)
+    contenders = [o for o in options if o["success_rate"] >= top_success - ROTH_SUCCESS_TOLERANCE]
+    best = max(contenders, key=lambda o: o["after_tax_ending_real"])
+    current_age = inp.current_age
+    return {
+        "window": [
+            plan.roth_start_age if plan.roth_start_age is not None else max(plan.retirement_age, current_age),
+            plan.roth_end_age if plan.roth_end_age is not None else rmd_start_age(plan.birth_year) - 1,
+        ],
+        "tax_deferred_balance": inp.tax_deferred,
+        "heir_tax_rate": HEIR_TAX_RATE,
+        "embedded_gains_rate": EMBEDDED_GAINS_RATE,
+        "current_rate": plan.roth_conversion_rate,
+        "best_rate": best["rate"],
+        "options": options,
+    }
+
+
 @router.get("/plans/{plan_id}/projection")
 def plan_projection(
     plan_id: int,
@@ -202,6 +262,7 @@ def plan_projection(
         "age": inp.current_age,
         "cash": inp.cash,
         "taxable": inp.taxable,
+        "taxable_basis": inp.taxable_basis,
         "tax_deferred": inp.tax_deferred,
         "tax_free": inp.tax_free,
         "other_assets": inp.other_assets,

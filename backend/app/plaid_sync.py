@@ -123,10 +123,15 @@ def sync_item(session: Session, item: PlaidItem, gateway: Gateway, today: date |
         securities = {s["security_id"]: s for s in holdings.get("securities") or []}
         for acct in by_plaid_id.values():
             acct.holdings.clear()
+        basis: dict[int, float | None] = {}
         for h in holdings.get("holdings") or []:
             acct = by_plaid_id.get(h.get("account_id"))
             if not acct:
                 continue
+            if h.get("cost_basis") is None:
+                basis[acct.id] = None
+            elif basis.get(acct.id, 0.0) is not None:
+                basis[acct.id] = basis.get(acct.id, 0.0) + h["cost_basis"]
             sec = securities.get(h.get("security_id"), {})
             acct.holdings.append(
                 Holding(
@@ -139,6 +144,9 @@ def sync_item(session: Session, item: PlaidItem, gateway: Gateway, today: date |
                 )
             )
             holdings_count += 1
+        for acct in by_plaid_id.values():
+            if acct.tax_treatment == "taxable" and basis.get(acct.id) is not None:
+                acct.cost_basis = basis[acct.id]
 
     liabilities = gateway.get_liabilities(item.access_token)
     if liabilities:

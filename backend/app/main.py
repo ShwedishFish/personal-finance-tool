@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from .db import init_db
-from .routers import accounts, insights, plaid, plans
+from .routers import accounts, data, insights, plaid, plans
 
 FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
 
@@ -21,6 +21,7 @@ app.include_router(accounts.router)
 app.include_router(plans.router)
 app.include_router(insights.router)
 app.include_router(plaid.router)
+app.include_router(data.router)
 
 
 @app.get("/api/health")

@@ -23,6 +23,11 @@ ADDITIONAL_MEDICARE_THRESHOLD = {"single": 200_000, "married_joint": 250_000}
 
 SS_PROVISIONAL_THRESHOLDS = {"single": (25_000, 34_000), "married_joint": (32_000, 44_000)}
 
+# Long-term capital gains: taxable-income tops of the 0% and 15% zones.
+LTCG_TOPS = {"single": (49_450, 545_500), "married_joint": (98_900, 613_700)}
+NIIT_RATE = 0.038
+NIIT_THRESHOLD = {"single": 200_000, "married_joint": 250_000}
+
 EARLY_WITHDRAWAL_AGE = 60  # 59½, rounded to the first full year without penalty
 EARLY_WITHDRAWAL_PENALTY = 0.10
 
@@ -59,6 +64,26 @@ def bracket_tax(taxable_income: float, filing_status: str, scale: float = 1.0) -
         tax += (min(taxable_income, upper) - lower) * rate
         lower = upper
     return tax
+
+
+def bracket_ceiling(rate: float, filing_status: str, scale: float = 1.0) -> float:
+    """Top of the taxable-income range taxed at `rate` (e.g. 0.22)."""
+    tops = BRACKET_TOPS[filing_status]
+    for r, top in zip(BRACKET_RATES, tops):
+        if abs(r - rate) < 1e-9:
+            return top * scale
+    raise ValueError(f"No {rate:.0%} bracket")
+
+
+def capital_gains_tax(ordinary_taxable: float, gains: float, filing_status: str, scale: float = 1.0) -> float:
+    """Long-term gains stack on top of ordinary taxable income."""
+    if gains <= 0:
+        return 0.0
+    top0, top15 = (t * scale for t in LTCG_TOPS[filing_status])
+    at0 = max(0.0, min(gains, top0 - ordinary_taxable))
+    rest = gains - at0
+    at15 = max(0.0, min(rest, top15 - max(ordinary_taxable, top0)))
+    return at15 * 0.15 + (rest - at15) * 0.20
 
 
 def standard_deduction(filing_status: str, scale: float = 1.0, people_65_plus: int = 0) -> float:
@@ -111,32 +136,48 @@ class TaxProfile:
     state_rate: float = 0.0
 
 
-def income_tax(
-    profile: TaxProfile,
-    *,
-    wages: float,
-    ordinary: float,
-    social_security: float,
-    pre_tax_contributions: float,
-    deferred_withdrawals: float,
-    early_withdrawals: float,
-    scale: float,
-    people_65_plus: int,
-) -> TaxBreakdown:
-    """Total tax for one year. `deferred_withdrawals` includes RMDs; `early_withdrawals` is the penalized part."""
-    other = max(0.0, wages - pre_tax_contributions) + ordinary + deferred_withdrawals
-    ss_taxable = taxable_social_security(other, social_security, profile.filing_status)
-    penalty = early_withdrawals * EARLY_WITHDRAWAL_PENALTY
+@dataclass
+class YearIncome:
+    """Everything that drives one year's tax bill."""
+
+    wages: float = 0.0
+    ordinary: float = 0.0
+    social_security: float = 0.0
+    pre_tax_contributions: float = 0.0
+    deferred_withdrawals: float = 0.0  # RMDs, Roth conversions, and other 401k/IRA withdrawals
+    early_withdrawals: float = 0.0  # penalized part of deferred_withdrawals
+    capital_gains: float = 0.0
+    scale: float = 1.0
+    people_65_plus: int = 0
+
+
+def _ordinary_parts(profile: TaxProfile, y: YearIncome) -> tuple[float, float]:
+    """(ordinary income incl. taxable Social Security, standard deduction)."""
+    other = max(0.0, y.wages - y.pre_tax_contributions) + y.ordinary + y.deferred_withdrawals
+    ss_taxable = taxable_social_security(other + y.capital_gains, y.social_security, profile.filing_status)
+    return other + ss_taxable, standard_deduction(profile.filing_status, y.scale, y.people_65_plus)
+
+
+def ordinary_taxable_income(profile: TaxProfile, y: YearIncome) -> float:
+    income, deduction = _ordinary_parts(profile, y)
+    return max(0.0, income - deduction)
+
+
+def income_tax(profile: TaxProfile, y: YearIncome) -> TaxBreakdown:
+    income, deduction = _ordinary_parts(profile, y)
+    penalty = y.early_withdrawals * EARLY_WITHDRAWAL_PENALTY
 
     if profile.mode == "flat":
-        return TaxBreakdown(federal=profile.flat_rate * (other + ss_taxable), penalty=penalty)
+        return TaxBreakdown(federal=profile.flat_rate * (income + y.capital_gains), penalty=penalty)
 
-    taxable_income = max(
-        0.0, other + ss_taxable - standard_deduction(profile.filing_status, scale, people_65_plus)
-    )
+    ordinary_ti = max(0.0, income - deduction)
+    gains_ti = max(0.0, y.capital_gains - max(0.0, deduction - income))
+    niit = NIIT_RATE * max(0.0, min(y.capital_gains, income + y.capital_gains - NIIT_THRESHOLD[profile.filing_status]))
     return TaxBreakdown(
-        federal=bracket_tax(taxable_income, profile.filing_status, scale),
-        state=profile.state_rate * taxable_income,
-        fica=payroll_tax(wages, profile.filing_status, scale),
+        federal=bracket_tax(ordinary_ti, profile.filing_status, y.scale)
+        + capital_gains_tax(ordinary_ti, gains_ti, profile.filing_status, y.scale)
+        + niit,
+        state=profile.state_rate * (ordinary_ti + gains_ti),
+        fica=payroll_tax(y.wages, profile.filing_status, y.scale),
         penalty=penalty,
     )

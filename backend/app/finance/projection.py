@@ -8,7 +8,20 @@ Each simulated year applies cash flows first, then investment growth.
 import random
 from dataclasses import asdict, dataclass, field
 
-from .tax import EARLY_WITHDRAWAL_AGE, TaxBreakdown, TaxProfile, income_tax, required_minimum_distribution
+from .tax import (
+    EARLY_WITHDRAWAL_AGE,
+    TaxBreakdown,
+    TaxProfile,
+    YearIncome,
+    bracket_ceiling,
+    income_tax,
+    ordinary_taxable_income,
+    required_minimum_distribution,
+    rmd_start_age,
+)
+
+HEIR_TAX_RATE = 0.22  # assumed tax on inherited 401k/IRA money, for after-tax comparisons
+EMBEDDED_GAINS_RATE = 0.15  # assumed tax on unrealized gains, for after-tax comparisons
 
 TAX_TYPES = ("wages", "ordinary", "social_security", "tax_free")
 
@@ -58,9 +71,13 @@ class ProjectionInput:
     spouse_current_age: int | None = None
     cash: float = 0.0
     taxable: float = 0.0
+    taxable_basis: float | None = None  # None = no unrealized gains
     tax_deferred: float = 0.0
     tax_free: float = 0.0
     other_assets: float = 0.0
+    roth_conversion_rate: float | None = None  # fill this federal bracket with conversions each year
+    roth_start_age: int | None = None  # default: retirement age
+    roth_end_age: int | None = None  # default: the year before RMDs start
     contrib_taxable: float = 0.0
     contrib_tax_deferred: float = 0.0
     contrib_tax_free: float = 0.0
@@ -98,11 +115,14 @@ class YearRow:
     debt_payments: float
     contributions: float
     rmd: float
+    roth_conversion: float
+    realized_gains: float
     net_cash_flow: float
     withdrawals: float
     shortfall: float
     cash: float
     taxable: float
+    taxable_basis: float
     tax_deferred: float
     tax_free: float
     other_assets: float
@@ -123,12 +143,37 @@ def _mean_return(inp: ProjectionInput, age: int) -> float:
     return inp.retirement_return if age >= inp.retirement_age else inp.expected_return
 
 
+def _gross_up(need: float, cap: float, tax_at) -> float:
+    """Smallest withdrawal g (<= cap) with g - (tax_at(g) - tax_at(0)) >= need, by fixed-point iteration."""
+    base = tax_at(0.0)
+    gross = need
+    for _ in range(40):
+        nxt = need + tax_at(min(gross, cap)) - base
+        if abs(nxt - gross) < 0.001:
+            gross = nxt
+            break
+        gross = nxt
+    return min(gross, cap)
+
+
+def after_tax_value(row: YearRow) -> float:
+    """Investable assets net of the taxes still embedded in them (nominal)."""
+    gains = max(0.0, row.taxable - row.taxable_basis)
+    return (
+        row.cash + row.taxable - gains * EMBEDDED_GAINS_RATE + row.tax_free + row.tax_deferred * (1 - HEIR_TAX_RATE)
+    )
+
+
 def simulate(inp: ProjectionInput, returns: list[float] | None = None) -> list[YearRow]:
     cash, taxable, deferred, free = inp.cash, inp.taxable, inp.tax_deferred, inp.tax_free
+    basis = inp.taxable if inp.taxable_basis is None else inp.taxable_basis
     other = inp.other_assets
     debts = [[d.balance, d.apr, d.monthly_payment] for d in inp.debts]
     profile = inp.tax_profile
     birth_year = inp.birth_year
+    roth_start = inp.roth_start_age if inp.roth_start_age is not None else inp.retirement_age
+    roth_end = inp.roth_end_age if inp.roth_end_age is not None else rmd_start_age(birth_year) - 1
+    convert = inp.roth_conversion_rate is not None and inp.tax_mode == "progressive"
     rows: list[YearRow] = []
 
     for t, age in enumerate(_years(inp)):
@@ -173,31 +218,45 @@ def simulate(inp: ProjectionInput, returns: list[float] | None = None) -> list[Y
         if inp.filing_status == "married_joint" and inp.spouse_current_age is not None:
             people_65 += int(inp.spouse_current_age + t >= 65)
         early = age < EARLY_WITHDRAWAL_AGE
+        conversion = 0.0
 
-        def tax_for(extra_deferred: float) -> TaxBreakdown:
-            return income_tax(
-                profile,
+        def year_income(extra_deferred: float = 0.0, gains: float = 0.0) -> YearIncome:
+            return YearIncome(
                 wages=income_by_type["wages"],
                 ordinary=income_by_type["ordinary"],
                 social_security=income_by_type["social_security"],
                 pre_tax_contributions=c_deferred,
-                deferred_withdrawals=rmd + extra_deferred,
+                deferred_withdrawals=rmd + conversion + extra_deferred,
                 early_withdrawals=extra_deferred if early else 0.0,
+                capital_gains=gains,
                 scale=infl,
                 people_65_plus=people_65,
             )
 
-        tax = tax_for(0.0)
+        def tax_for(extra_deferred: float = 0.0, gains: float = 0.0) -> TaxBreakdown:
+            return income_tax(profile, year_income(extra_deferred, gains))
+
+        if convert and roth_start <= age <= roth_end and deferred > 0:
+            ceiling = bracket_ceiling(inp.roth_conversion_rate, inp.filing_status, infl)
+            for _ in range(4):  # taxable Social Security rises with conversions, so iterate
+                conversion = max(0.0, conversion + ceiling - ordinary_taxable_income(profile, year_income()))
+            conversion = min(conversion, deferred)
+            deferred -= conversion
+            free += conversion
+
+        tax = tax_for()
         income = sum(income_by_type.values())
         net = income + rmd - tax.total - expenses - goals - debt_payments - c_deferred - c_free - c_taxable
 
         deferred += c_deferred
         free += c_free
         taxable += c_taxable
+        basis += c_taxable
 
-        withdrawals = shortfall = 0.0
+        withdrawals = shortfall = realized = 0.0
         if net >= 0:
             taxable += net
+            basis += net
         else:
             need = -net
             take = min(cash, need)
@@ -205,24 +264,23 @@ def simulate(inp: ProjectionInput, returns: list[float] | None = None) -> list[Y
             need -= take
             withdrawals += take
 
-            take = min(taxable, need)
-            taxable -= take
-            need -= take
-            withdrawals += take
+            if need > 0 and taxable > 0:
+                gain_share = max(0.0, 1 - basis / taxable)
+                before = tax.total
+                gross = _gross_up(need, taxable, lambda g: tax_for(gains=g * gain_share).total)
+                realized = gross * gain_share
+                tax = tax_for(gains=realized)
+                basis -= gross - realized
+                taxable -= gross
+                need -= gross - (tax.total - before)
+                withdrawals += gross
 
             if need > 0 and deferred > 0:
-                base = tax.total
-                gross = need
-                for _ in range(30):
-                    nxt = need + tax_for(min(gross, deferred)).total - base
-                    if abs(nxt - gross) < 0.001:
-                        gross = nxt
-                        break
-                    gross = nxt
-                gross = min(gross, deferred)
-                tax = tax_for(gross)
+                before = tax.total
+                gross = _gross_up(need, deferred, lambda g: tax_for(g, realized).total)
+                tax = tax_for(gross, realized)
                 deferred -= gross
-                need -= gross - (tax.total - base)
+                need -= gross - (tax.total - before)
                 withdrawals += gross
 
             take = min(free, max(need, 0.0))
@@ -259,11 +317,14 @@ def simulate(inp: ProjectionInput, returns: list[float] | None = None) -> list[Y
                 debt_payments=debt_payments,
                 contributions=c_deferred + c_free + c_taxable,
                 rmd=rmd,
+                roth_conversion=conversion,
+                realized_gains=realized,
                 net_cash_flow=net,
                 withdrawals=withdrawals,
                 shortfall=shortfall,
                 cash=cash,
                 taxable=taxable,
+                taxable_basis=basis,
                 tax_deferred=deferred,
                 tax_free=free,
                 other_assets=other,
@@ -339,6 +400,16 @@ def monte_carlo(inp: ProjectionInput, simulations: int = 1000, seed: int = 42) -
     }
 
 
+def lifetime_taxes_real(inp: ProjectionInput, rows: list[YearRow]) -> float:
+    return sum(row.taxes / (1 + inp.inflation) ** (row.age - inp.current_age) for row in rows)
+
+
+def after_tax_ending_real(inp: ProjectionInput, rows: list[YearRow]) -> float:
+    if not rows:
+        return 0.0
+    return after_tax_value(rows[-1]) / (1 + inp.inflation) ** len(rows)
+
+
 def project(inp: ProjectionInput, simulations: int = 1000, seed: int = 42) -> dict:
     rows = simulate(inp)
     target = fi_number(inp)
@@ -348,9 +419,8 @@ def project(inp: ProjectionInput, simulations: int = 1000, seed: int = 42) -> di
         "fi_number": target,
         "fi_age": fi_age,
         "depletion_age": depleted,
-        "lifetime_taxes_real": sum(
-            row.taxes / (1 + inp.inflation) ** (row.age - inp.current_age) for row in rows
-        ),
+        "lifetime_taxes_real": lifetime_taxes_real(inp, rows),
+        "after_tax_ending_real": after_tax_ending_real(inp, rows),
         "years": [asdict(row) for row in rows],
         "monte_carlo": monte_carlo(inp, simulations, seed) if simulations > 0 else None,
     }

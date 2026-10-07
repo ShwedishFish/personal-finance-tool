@@ -1,7 +1,9 @@
 from datetime import date, datetime
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
+
+from .finance.tax import BRACKET_RATES
 
 AccountKind = Literal[
     "cash", "brokerage", "retirement", "property", "other_asset", "credit_card", "loan", "mortgage", "other_liability"
@@ -11,6 +13,15 @@ CashFlowKind = Literal["income", "expense", "goal"]
 TaxType = Literal["wages", "ordinary", "social_security", "tax_free"]
 TaxMode = Literal["progressive", "flat"]
 FilingStatus = Literal["single", "married_joint"]
+
+
+def _check_bracket(rate: float) -> float:
+    if not any(abs(rate - r) < 1e-9 for r in BRACKET_RATES[:-1]):
+        raise ValueError("must be a federal bracket rate below the top bracket, e.g. 0.22")
+    return rate
+
+
+RothBracket = Annotated[float, AfterValidator(_check_bracket)]
 ExpenseCategory = Literal[
     "general", "housing", "home_maintenance", "utilities", "food", "transportation", "healthcare",
     "insurance", "travel", "hobbies", "kids", "education", "giving", "other",
@@ -25,6 +36,7 @@ class AccountBase(BaseModel):
     interest_rate: float = Field(0.0, ge=0, le=1)
     monthly_payment: float = Field(0.0, ge=0)
     annual_contribution: float = Field(0.0, ge=0)
+    cost_basis: float | None = Field(None, ge=0)
 
 
 class AccountCreate(AccountBase):
@@ -40,6 +52,7 @@ class AccountUpdate(BaseModel):
     interest_rate: float | None = Field(None, ge=0, le=1)
     monthly_payment: float | None = Field(None, ge=0)
     annual_contribution: float | None = Field(None, ge=0)
+    cost_basis: float | None = Field(None, ge=0)
     archived: bool | None = None
 
 
@@ -88,6 +101,9 @@ class PlanBase(BaseModel):
     spouse_birth_year: int | None = Field(None, ge=1900, le=2100)
     spouse_ss_monthly_benefit: float = Field(0.0, ge=0, le=20_000)
     spouse_ss_claim_age: int = Field(67, ge=62, le=70)
+    roth_conversion_rate: RothBracket | None = None
+    roth_start_age: int | None = Field(None, ge=18, le=100)
+    roth_end_age: int | None = Field(None, ge=18, le=100)
 
 
 class PlanCreate(PlanBase):
@@ -114,6 +130,9 @@ class PlanUpdate(BaseModel):
     spouse_birth_year: int | None = Field(None, ge=1900, le=2100)
     spouse_ss_monthly_benefit: float | None = Field(None, ge=0, le=20_000)
     spouse_ss_claim_age: int | None = Field(None, ge=62, le=70)
+    roth_conversion_rate: RothBracket | None = None
+    roth_start_age: int | None = Field(None, ge=18, le=100)
+    roth_end_age: int | None = Field(None, ge=18, le=100)
 
 
 class CashFlowBase(BaseModel):

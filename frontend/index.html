@@ -42,9 +42,13 @@
           <h2>Accounts</h2>
           <div class="actions">
             <label class="inline"><input type="checkbox" id="show-archived" /> Show archived</label>
+            <button id="import-csv" title="Columns: date, account, balance, and optionally kind, tax_treatment">Import CSV</button>
+            <a class="button" href="/api/export/balances.csv">Export CSV</a>
+            <input type="file" id="csv-file" accept=".csv,text/csv" hidden />
             <button id="add-account" class="primary">Add account</button>
           </div>
         </div>
+        <div id="import-result" class="muted" hidden></div>
         <div class="table-wrap"><table id="accounts-table"></table></div>
       </div>
       <div class="panel">
@@ -127,6 +131,22 @@
           <h2>When should you claim Social Security?</h2>
           <p class="muted" id="ss-note"></p>
           <div class="table-wrap"><table id="ss-table"></table></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Roth conversions</h2>
+            <div class="actions">
+              <button id="roth-edit">Edit</button>
+              <button id="roth-explore">Explore strategies</button>
+            </div>
+          </div>
+          <p class="muted">Moving 401k/IRA money to a Roth in low-income years (after retirement, before required withdrawals) can lower lifetime taxes. You pay tax now on what you convert.</p>
+          <div id="roth-summary"></div>
+          <div id="roth-results" hidden>
+            <p class="muted" id="roth-note"></p>
+            <div class="table-wrap"><table id="roth-table"></table></div>
+          </div>
         </div>
 
         <div class="panel">
