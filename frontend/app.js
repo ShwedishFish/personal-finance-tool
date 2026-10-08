@@ -451,6 +451,8 @@ $("#plaid-sync").addEventListener("click", guard(async () => {
 
 // ---------- plans ----------
 
+const STATE_LABELS = { "": "Not chosen: use a flat rate" };
+
 const RETURN_MODEL_LABELS = {
   allocation: "Stocks & bonds, gliding to a retirement mix",
   simple: "Single return before and after retirement",
@@ -486,7 +488,9 @@ const planFields = [
   { name: "spouse_life_expectancy", label: "Plan until spouse's age", type: "number", step: 1, default: 95, help: "The plan runs until the second death" },
   { name: "survivor_spending", label: "Spending after one spouse dies", type: "percent", default: 0.75, help: "Share of household spending that continues (kids and education excluded)" },
   { name: "tax_mode", label: "Tax model", type: "select", options: TAX_MODE_LABELS },
-  { name: "state_tax_rate", label: "State income tax", type: "percent", default: 0, help: "Flat rate on taxable income" },
+  { name: "state", label: "State of residence", type: "select", options: STATE_LABELS,
+    help: "2026 brackets, deductions, and Social Security and retirement-income rules for that state" },
+  { name: "state_tax_rate", label: "State income tax", type: "percent", default: 0, help: "Only when no state is chosen: flat rate on taxable income" },
   { name: "effective_tax_rate", label: "Flat tax rate", type: "percent", default: 0.15, help: "Only used by the flat model" },
 ];
 
@@ -1210,4 +1214,5 @@ $("#debt-run").addEventListener("click", guard(loadDebt));
 
 // ---------- init ----------
 
+api("/api/states").then((states) => Object.assign(STATE_LABELS, states)).catch(() => {});
 showTab(loaders[location.hash.slice(1)] ? location.hash.slice(1) : "dashboard");

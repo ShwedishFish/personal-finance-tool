@@ -20,6 +20,7 @@ from ..finance.social_security import (
     annual_benefit,
     full_retirement_age_months,
 )
+from ..finance.state_tax import STATES
 from ..finance.tax import rmd_start_age
 from ..models import CashFlow, Child, Plan
 from ..schemas import (
@@ -43,6 +44,12 @@ def get_plan(session: Session, plan_id: int) -> Plan:
     if plan is None:
         raise HTTPException(404, "Plan not found")
     return plan
+
+
+@router.get("/states")
+def list_states() -> dict[str, str]:
+    """State codes and names for the plan's state income tax setting."""
+    return dict(sorted(((code, s.name) for code, s in STATES.items()), key=lambda item: item[1]))
 
 
 @router.get("/plans", response_model=list[PlanOut])

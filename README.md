@@ -98,6 +98,13 @@ treat that file as sensitive.
   yearly stock and bond returns from normal distributions. A simpler model with one return
   before and one after retirement is available under Assumptions. It is a planning aid, not a
   prediction.
+- Choosing a state applies its 2026 brackets, standard deduction, and personal exemptions (from
+  the [Tax Foundation](https://taxfoundation.org/data/all/state/state-income-tax-rates-2026/)). It
+  also applies Social Security taxation in the eight states that still tax benefits, full or
+  partial 401k/IRA exclusions (IL, IA, MS, PA, GA, NY), and the special cases of Washington
+  (capital gains only) and Missouri (no capital gains tax). Local taxes, phaseouts, and other
+  partial pension exclusions are not modeled. Without a state, a flat rate applies to federal
+  taxable income.
 - Before Medicare, ACA marketplace premium tax credits are applied each year from household
   income (AGI plus all Social Security) and a benchmark silver premium you set, under the 2026
   rules: IRS Rev. Proc. 2025-25 percentages and no credit above 400% of the poverty line. Below

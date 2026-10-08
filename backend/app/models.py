@@ -128,6 +128,7 @@ class Plan(Base):
     filing_status: Mapped[str] = mapped_column(String, default="single")
     effective_tax_rate: Mapped[float] = mapped_column(Float, default=0.15)
     state_tax_rate: Mapped[float] = mapped_column(Float, default=0.0)
+    state: Mapped[str] = mapped_column(String, default="")  # two-letter code; "" = flat state_tax_rate
     withdrawal_rate: Mapped[float] = mapped_column(Float, default=0.04)
     ss_monthly_benefit: Mapped[float] = mapped_column(Float, default=0.0)
     ss_claim_age: Mapped[int] = mapped_column(Integer, default=67)

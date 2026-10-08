@@ -7,6 +7,8 @@ provisional income, additional Medicare tax) are not.
 
 from dataclasses import dataclass
 
+from .state_tax import state_income_tax
+
 BRACKET_RATES = (0.10, 0.12, 0.22, 0.24, 0.32, 0.35, 0.37)
 BRACKET_TOPS = {
     "single": (12_400, 50_400, 105_700, 201_775, 256_225, 640_600),
@@ -133,7 +135,8 @@ class TaxProfile:
     mode: str = "progressive"  # "progressive" | "flat"
     filing_status: str = "single"
     flat_rate: float = 0.15
-    state_rate: float = 0.0
+    state_rate: float = 0.0  # used when no state is chosen, on federal taxable income
+    state: str = ""  # two-letter code from state_tax.STATES
 
 
 @dataclass
@@ -151,11 +154,33 @@ class YearIncome:
     people_65_plus: int = 0
 
 
+def _income_parts(profile: TaxProfile, y: YearIncome) -> tuple[float, float]:
+    """(ordinary income other than Social Security, taxable Social Security)."""
+    other = max(0.0, y.wages - y.pre_tax_contributions) + y.ordinary + y.deferred_withdrawals
+    return other, taxable_social_security(other + y.capital_gains, y.social_security, profile.filing_status)
+
+
 def _ordinary_parts(profile: TaxProfile, y: YearIncome) -> tuple[float, float]:
     """(ordinary income incl. taxable Social Security, standard deduction)."""
-    other = max(0.0, y.wages - y.pre_tax_contributions) + y.ordinary + y.deferred_withdrawals
-    ss_taxable = taxable_social_security(other + y.capital_gains, y.social_security, profile.filing_status)
+    other, ss_taxable = _income_parts(profile, y)
     return other + ss_taxable, standard_deduction(profile.filing_status, y.scale, y.people_65_plus)
+
+
+def _state_tax(profile: TaxProfile, y: YearIncome, ordinary_ti: float, gains_ti: float) -> float:
+    if not profile.state:
+        return profile.state_rate * (ordinary_ti + gains_ti)
+    other, ss_taxable = _income_parts(profile, y)
+    return state_income_tax(
+        profile.state,
+        profile.filing_status,
+        other_income=other,
+        social_security_taxable=ss_taxable,
+        federal_agi=other + ss_taxable + y.capital_gains,
+        capital_gains=y.capital_gains,
+        retirement_withdrawals=y.deferred_withdrawals - y.early_withdrawals,
+        people_65_plus=y.people_65_plus,
+        scale=y.scale,
+    )
 
 
 def adjusted_gross_income(profile: TaxProfile, y: YearIncome) -> float:
@@ -189,7 +214,7 @@ def income_tax(profile: TaxProfile, y: YearIncome) -> TaxBreakdown:
         federal=bracket_tax(ordinary_ti, profile.filing_status, y.scale)
         + capital_gains_tax(ordinary_ti, gains_ti, profile.filing_status, y.scale)
         + niit,
-        state=profile.state_rate * (ordinary_ti + gains_ti),
+        state=_state_tax(profile, y, ordinary_ti, gains_ti),
         fica=payroll_tax(y.wages, profile.filing_status, y.scale),
         penalty=penalty,
     )

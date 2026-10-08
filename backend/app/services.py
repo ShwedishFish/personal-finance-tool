@@ -198,6 +198,7 @@ def build_projection_input(
         filing_status=plan.filing_status,
         effective_tax_rate=plan.effective_tax_rate,
         state_tax_rate=plan.state_tax_rate,
+        state=plan.state,
         withdrawal_rate=plan.withdrawal_rate,
         spouse_current_age=today.year - plan.spouse_birth_year if plan.spouse_birth_year else None,
         spouse_life_expectancy=plan.spouse_life_expectancy if plan.spouse_birth_year else None,

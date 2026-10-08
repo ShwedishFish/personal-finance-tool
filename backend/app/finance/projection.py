@@ -87,6 +87,7 @@ class ProjectionInput:
     filing_status: str = "single"
     effective_tax_rate: float = 0.15  # used when tax_mode == "flat"
     state_tax_rate: float = 0.0
+    state: str = ""  # two-letter code; when set, that state's rules replace state_tax_rate
     withdrawal_rate: float = 0.04
     # Guyton-Klinger guardrails on flexible spending once everyone is retired: if the withdrawal
     # rate drifts more than `guardrail_band` above (below) its starting level, cut (raise)
@@ -164,6 +165,7 @@ class ProjectionInput:
             filing_status=self.filing_status,
             flat_rate=min(max(self.effective_tax_rate, 0.0), 0.95),
             state_rate=self.state_tax_rate,
+            state=self.state,
         )
 
 

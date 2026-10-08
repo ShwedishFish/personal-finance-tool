@@ -3,6 +3,7 @@ from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
+from .finance.state_tax import STATES
 from .finance.tax import BRACKET_RATES
 
 AccountKind = Literal[
@@ -25,6 +26,16 @@ def _check_bracket(rate: float) -> float:
 
 
 RothBracket = Annotated[float, AfterValidator(_check_bracket)]
+
+
+def _check_state(code: str) -> str:
+    code = code.upper()
+    if code and code not in STATES:
+        raise ValueError("must be a two-letter US state code, DC, or empty")
+    return code
+
+
+StateCode = Annotated[str, AfterValidator(_check_state)]
 ExpenseCategory = Literal[
     "general", "housing", "home_maintenance", "utilities", "food", "transportation", "healthcare",
     "insurance", "travel", "hobbies", "kids", "education", "giving", "other",
@@ -112,6 +123,7 @@ class PlanBase(BaseModel):
     filing_status: FilingStatus = "single"
     effective_tax_rate: float = Field(0.15, ge=0, le=0.9)
     state_tax_rate: float = Field(0.0, ge=0, le=0.2)
+    state: StateCode = ""
     withdrawal_rate: float = Field(0.04, gt=0, le=0.2)
     ss_monthly_benefit: float = Field(0.0, ge=0, le=20_000)
     ss_claim_age: int = Field(67, ge=62, le=70)
@@ -161,6 +173,7 @@ class PlanUpdate(BaseModel):
     filing_status: FilingStatus | None = None
     effective_tax_rate: float | None = Field(None, ge=0, le=0.9)
     state_tax_rate: float | None = Field(None, ge=0, le=0.2)
+    state: StateCode | None = None
     withdrawal_rate: float | None = Field(None, gt=0, le=0.2)
     ss_monthly_benefit: float | None = Field(None, ge=0, le=20_000)
     ss_claim_age: int | None = Field(None, ge=62, le=70)
