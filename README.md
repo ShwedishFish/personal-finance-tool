@@ -68,6 +68,21 @@ Then open <http://127.0.0.1:8020/>. In Cursor/VS Code, **Run Build Task** (⇧�
 
 Run tests with `.venv/bin/python -m pytest`.
 
+### Keep it running (macOS)
+
+```bash
+./scripts/launch-agent.sh install     # start now and at every login; restarts if it stops
+./scripts/launch-agent.sh status
+./scripts/launch-agent.sh uninstall
+```
+
+The app then stays at <http://127.0.0.1:8020/> without a terminal (log in `data/logs/server.log`).
+Because background processes can't read folders like Documents on their own, the script adds a
+small hidden app, **Personal Finance Tool Server**, to `~/Applications`; the first time it starts,
+macOS asks whether it may access the folder this repo is in, so click **Allow**. Stop the dev
+server before installing. Afterwards ⇧⌘B just opens the browser, since the app is already
+running. It serves the code as of its last start, so after pulling changes run `install` again.
+
 ## Connecting banks with Plaid
 
 1. Create a free account at <https://dashboard.plaid.com/> and copy your sandbox keys.
