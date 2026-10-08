@@ -98,6 +98,11 @@ treat that file as sensitive.
   yearly stock and bond returns from normal distributions. A simpler model with one return
   before and one after retirement is available under Assumptions. It is a planning aid, not a
   prediction.
+- The historical backtest replays the plan through every complete stretch of actual US returns
+  since 1928 (S&P 500 and 10-year Treasuries, from
+  [Damodaran, NYU Stern](https://pages.stern.nyu.edu/~adamodar/New_Home_Page/datafile/histretSP.html)).
+  Each year's real return is kept, while spending still grows at your assumed inflation rate.
+  Refresh the data with `scripts/update_historical_returns.py`.
 
 ## Project layout
 

@@ -632,6 +632,8 @@ async function renderPlan() {
     }),
   });
 
+  renderBacktest(proj.backtest);
+
   const hasSpouse = years.some((y) => y.spouse_age != null);
   const ageCell = (y) => {
     const fmt = (alive, a) => (alive ? a : `<span class="muted" title="Deceased in this plan">†</span>`);
@@ -657,6 +659,49 @@ async function renderPlan() {
         <td class="num">${money(y.investable)}</td><td class="num">${money(y.net_worth)}</td>
         <td class="num">${money(y.net_worth_real)}</td>
       </tr>`).join("")}`;
+}
+
+function renderBacktest(bt) {
+  $("#backtest-panel").hidden = !bt;
+  if (!bt) return;
+  const failed = bt.starts.filter((s) => s.depletion_age != null);
+  $("#backtest-summary").innerHTML =
+    `Your plan replayed through every ${bt.bands.length}-year stretch of actual US stock and 10-year Treasury returns ` +
+    `(${bt.first_year}–${bt.last_year}, adjusted for inflation), using your stock/bond mix. ` +
+    `<strong class="${scoreClass(bt.success_rate)}">${pct(bt.success_rate, 0)}</strong> of ${bt.simulations} starting years lasted. ` +
+    (failed.length
+      ? `Hardest start: ${bt.worst_start_year} (money ran out at ${failed.find((s) => s.start_year === bt.worst_start_year)?.depletion_age}).`
+      : `Hardest start: ${bt.worst_start_year}.`) +
+    ` Source: <a href="https://pages.stern.nyu.edu/~adamodar/New_Home_Page/datafile/histretSP.html" target="_blank" rel="noopener">Damodaran, NYU Stern</a>.`;
+  drawChart("backtest-chart", {
+    type: "bar",
+    data: {
+      labels: bt.starts.map((s) => s.start_year),
+      datasets: [
+        {
+          label: "Left at end (today's dollars)",
+          data: bt.starts.map((s) => s.ending_real),
+          backgroundColor: PALETTE[0],
+        },
+        {
+          type: "scatter",
+          label: "Ran out",
+          data: bt.starts.map((s) => (s.depletion_age != null ? 0 : null)),
+          pointStyle: "crossRot", pointRadius: 6, borderColor: "#d64545", borderWidth: 2,
+        },
+      ],
+    },
+    options: moneyChartOptions({
+      scales: { x: { title: { display: true, text: "If your plan had started in" } } },
+      plugins: {
+        legend: { display: false },
+        tooltip: { filter: (c) => c.datasetIndex === 0, callbacks: { label: (c) => `${c.dataset.label}: ${money(c.parsed.y)}`, afterLabel: (ctx) => {
+          const s = bt.starts[ctx.dataIndex];
+          return s.depletion_age != null ? `Ran out at age ${s.depletion_age}` : "Lasted";
+        } } },
+      },
+    }),
+  });
 }
 
 const OWNER_LABELS = { joint: "Joint / household", self: "You", spouse: "Spouse" };

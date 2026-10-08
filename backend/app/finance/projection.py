@@ -8,6 +8,7 @@ Each simulated year applies cash flows first, then investment growth.
 import random
 from dataclasses import asdict, dataclass, field, replace
 
+from .historical_data import ANNUAL_RETURNS
 from .medicare import IRMAA_LOOKBACK_YEARS, MEDICARE_AGE, irmaa_surcharge
 from .tax import (
     EARLY_WITHDRAWAL_AGE,
@@ -199,15 +200,17 @@ def _years(inp: ProjectionInput) -> range:
     return range(inp.current_age, inp.end_age + 1)
 
 
-def stock_allocation(inp: ProjectionInput, age: int) -> float | None:
-    """Share of investments in stocks at `age`, or None for the simple return model."""
-    if inp.return_model != "allocation":
-        return None
+def _glide(inp: ProjectionInput, age: int) -> float:
     start, end = inp.current_age, inp.first_retirement_age
     if age >= end or end <= start:
         return inp.stock_allocation_retired
     progress = (age - start) / (end - start)
     return inp.stock_allocation_now + (inp.stock_allocation_retired - inp.stock_allocation_now) * progress
+
+
+def stock_allocation(inp: ProjectionInput, age: int) -> float | None:
+    """Share of investments in stocks at `age`, or None for the simple return model."""
+    return _glide(inp, age) if inp.return_model == "allocation" else None
 
 
 def _mean_return(inp: ProjectionInput, age: int) -> float:
@@ -221,8 +224,7 @@ def portfolio_returns(inp: ProjectionInput, stocks: list[float], bonds: list[flo
     """Yearly portfolio returns for given stock and bond return paths, using the glide path."""
     out = []
     for age, s, b in zip(_years(inp), stocks, bonds, strict=False):
-        w = stock_allocation(inp, age)
-        w = 1.0 if w is None else w
+        w = _glide(inp, age)
         out.append(w * s + (1 - w) * b)
     return out
 
@@ -528,8 +530,11 @@ def _percentile(sorted_values: list[float], p: float) -> float:
     return sorted_values[lo] + (sorted_values[hi] - sorted_values[lo]) * (k - lo)
 
 
-def summarize_paths(inp: ProjectionInput, paths) -> dict:
-    """Run the plan once per return path; success rate, failure ages, and percentile bands."""
+def summarize_paths(inp: ProjectionInput, paths, outcomes: list | None = None) -> dict:
+    """Run the plan once per return path; success rate, failure ages, and percentile bands.
+
+    If `outcomes` is given, (depletion age or None, ending investable in today's dollars) is appended per path.
+    """
     ages = list(_years(inp))
     by_year: list[list[float]] = [[] for _ in ages]
     successes = runs = 0
@@ -544,6 +549,8 @@ def summarize_paths(inp: ProjectionInput, paths) -> dict:
             depletion_ages.append(failed_at)
         for i, row in enumerate(rows):
             by_year[i].append(row.investable_real)
+        if outcomes is not None:
+            outcomes.append((failed_at, rows[-1].investable_real if rows else 0.0))
 
     bands = []
     for age, values in zip(ages, by_year, strict=True):
@@ -569,6 +576,43 @@ def monte_carlo(inp: ProjectionInput, simulations: int = 1000, seed: int = 42) -
     return summarize_paths(inp, (random_returns(inp, rng) for _ in range(simulations)))
 
 
+def historical_paths(inp: ProjectionInput, data=ANNUAL_RETURNS) -> list[tuple[int, list[float]]]:
+    """(start year, portfolio returns) for every complete historical window as long as the plan.
+
+    Each year's real stock and bond returns are re-inflated at the plan's inflation rate, so the plan
+    experiences history's real returns while its spending keeps growing at the assumed inflation.
+    """
+    n = len(_years(inp))
+    paths = []
+    for start in range(len(data) - n + 1):
+        window = data[start : start + n]
+        stocks = [(1 + s) / (1 + cpi) * (1 + inp.inflation) - 1 for _, s, _, cpi in window]
+        bonds = [(1 + b) / (1 + cpi) * (1 + inp.inflation) - 1 for _, _, b, cpi in window]
+        paths.append((window[0][0], portfolio_returns(inp, stocks, bonds)))
+    return paths
+
+
+def backtest(inp: ProjectionInput, data=ANNUAL_RETURNS) -> dict | None:
+    """Replay the plan through every historical sequence of returns; None if history is too short."""
+    paths = historical_paths(inp, data)
+    if not paths:
+        return None
+    outcomes: list = []
+    summary = summarize_paths(inp, (returns for _, returns in paths), outcomes)
+    starts = [
+        {"start_year": year, "depletion_age": failed_at, "ending_real": ending}
+        for (year, _), (failed_at, ending) in zip(paths, outcomes, strict=True)
+    ]
+    worst = min(starts, key=lambda s: (s["depletion_age"] is None, s["depletion_age"] or 0, s["ending_real"]))
+    return {
+        **summary,
+        "first_year": data[0][0],
+        "last_year": data[-1][0],
+        "starts": starts,
+        "worst_start_year": worst["start_year"],
+    }
+
+
 def lifetime_taxes_real(inp: ProjectionInput, rows: list[YearRow]) -> float:
     return sum(row.taxes / (1 + inp.inflation) ** (row.age - inp.current_age) for row in rows)
 
@@ -592,4 +636,5 @@ def project(inp: ProjectionInput, simulations: int = 1000, seed: int = 42) -> di
         "after_tax_ending_real": after_tax_ending_real(inp, rows),
         "years": [asdict(row) for row in rows],
         "monte_carlo": monte_carlo(inp, simulations, seed) if simulations > 0 else None,
+        "backtest": backtest(inp) if simulations > 0 else None,
     }
