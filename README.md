@@ -98,6 +98,11 @@ treat that file as sensitive.
   yearly stock and bond returns from normal distributions. A simpler model with one return
   before and one after retirement is available under Assumptions. It is a planning aid, not a
   prediction.
+- Homes: your home now (optionally linked to its property and mortgage accounts, so they are not
+  counted twice), one you plan to buy (down payment and closing costs from savings, then a
+  mortgage), and sales or downsizing. Values grow at inflation plus your appreciation rate.
+  Carrying costs are added to housing spending. Sale proceeds go to savings, and gains above the
+  $250k/$500k home-sale exclusion are taxed as capital gains.
 - Choosing a state applies its 2026 brackets, standard deduction, and personal exemptions (from
   the [Tax Foundation](https://taxfoundation.org/data/all/state/state-income-tax-rates-2026/)). It
   also applies Social Security taxation in the eight states that still tax benefits, full or

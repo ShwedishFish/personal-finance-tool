@@ -154,6 +154,7 @@ class Plan(Base):
     children: Mapped[list["Child"]] = relationship(
         back_populates="plan", cascade="all, delete-orphan", order_by="Child.birth_year"
     )
+    homes: Mapped[list["Home"]] = relationship(back_populates="plan", cascade="all, delete-orphan", order_by="Home.id")
 
 
 class CashFlow(Base):
@@ -177,6 +178,41 @@ class CashFlow(Base):
     owner: Mapped[str] = mapped_column(String, default="joint")
 
     plan: Mapped[Plan] = relationship(back_populates="cash_flows")
+
+
+class Home(Base):
+    """A home owned now or bought later, with its mortgage, carrying costs, and an optional sale.
+
+    A home owned now can be linked to a property account and a mortgage account; their balances
+    are then used here instead of counting the accounts separately.
+    """
+
+    __tablename__ = "homes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    plan_id: Mapped[int] = mapped_column(ForeignKey("plans.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(String)
+    value: Mapped[float] = mapped_column(Float, default=0.0)  # today's dollars: worth now, or price if bought later
+    purchase_age: Mapped[int | None] = mapped_column(Integer, nullable=True)  # None = owned now
+    cost_basis: Mapped[float | None] = mapped_column(Float, nullable=True)
+    property_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    mortgage_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    mortgage_balance: Mapped[float] = mapped_column(Float, default=0.0)
+    mortgage_payment: Mapped[float] = mapped_column(Float, default=0.0)  # monthly
+    mortgage_rate: Mapped[float] = mapped_column(Float, default=0.065)
+    down_payment: Mapped[float] = mapped_column(Float, default=0.2)
+    closing_costs: Mapped[float] = mapped_column(Float, default=0.03)
+    mortgage_years: Mapped[int] = mapped_column(Integer, default=30)
+    appreciation: Mapped[float] = mapped_column(Float, default=0.0)  # above inflation
+    carrying_costs: Mapped[float] = mapped_column(Float, default=0.0)  # share of value per year
+    sale_age: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    selling_costs: Mapped[float] = mapped_column(Float, default=0.06)
+
+    plan: Mapped[Plan] = relationship(back_populates="homes")
 
 
 class Child(Base):

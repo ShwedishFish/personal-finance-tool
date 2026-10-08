@@ -13,6 +13,7 @@ from .historical_data import ANNUAL_RETURNS
 from .medicare import IRMAA_LOOKBACK_YEARS, MEDICARE_AGE, irmaa_surcharge
 from .tax import (
     EARLY_WITHDRAWAL_AGE,
+    HOME_SALE_EXCLUSION,
     TaxBreakdown,
     TaxProfile,
     YearIncome,
@@ -60,6 +61,44 @@ class DebtInput:
     balance: float
     apr: float
     monthly_payment: float
+
+
+@dataclass
+class HomeInput:
+    name: str
+    value: float  # today's dollars: what it is worth now, or the price if bought later
+    purchase_age: int | None = None  # None = owned now
+    cost_basis: float | None = None  # owned now: price paid plus improvements; None = value (no gain)
+    mortgage_balance: float = 0.0  # owned now
+    mortgage_payment: float = 0.0  # monthly, owned now
+    mortgage_rate: float = 0.0
+    down_payment: float = 0.2  # share of the price, when bought later
+    closing_costs: float = 0.03  # share of the price, when bought later
+    mortgage_years: int = 30  # when bought later
+    appreciation: float = 0.0  # yearly, above inflation
+    carrying_costs: float = 0.0  # property tax, insurance, upkeep: share of value per year
+    sale_age: int | None = None
+    selling_costs: float = 0.06  # share of the sale price
+
+
+def monthly_mortgage_payment(principal: float, rate: float, years: int) -> float:
+    n = max(years, 1) * 12
+    if principal <= 0:
+        return 0.0
+    if rate <= 0:
+        return principal / n
+    r = rate / 12
+    return principal * r / (1 - (1 + r) ** -n)
+
+
+@dataclass
+class _HomeState:
+    owned: bool
+    value: float = 0.0
+    basis: float = 0.0
+    balance: float = 0.0
+    payment: float = 0.0  # yearly
+    rate: float = 0.0
 
 
 @dataclass
@@ -120,6 +159,7 @@ class ProjectionInput:
     # Benchmark silver premiums for marketplace coverage before Medicare; each year the ACA credit
     # is computed from the active ones and household income.
     aca_benchmarks: list[FlowInput] = field(default_factory=list)
+    homes: list[HomeInput] = field(default_factory=list)
 
     @property
     def birth_year(self) -> int:
@@ -205,6 +245,8 @@ class YearRow:
     tax_deferred: float
     tax_free: float
     other_assets: float
+    home_value: float
+    home_equity: float
     liabilities: float
     investable: float
     net_worth: float
@@ -313,6 +355,13 @@ def simulate(inp: ProjectionInput, returns: list[float] | None = None) -> list[Y
     rows: list[YearRow] = []
     flex = 1.0
     initial_rate: float | None = None
+    homes = [
+        _HomeState(True, h.value, h.value if h.cost_basis is None else h.cost_basis, h.mortgage_balance,
+                   h.mortgage_payment * 12, h.mortgage_rate)
+        if h.purchase_age is None or h.purchase_age < inp.current_age
+        else _HomeState(False)
+        for h in inp.homes
+    ]
 
     for t, age in enumerate(_years(inp)):
         investable_start = cash + taxable + deferred + free
@@ -374,6 +423,32 @@ def simulate(inp: ProjectionInput, returns: list[float] | None = None) -> list[Y
                 flex = max(flex * (1 - inp.guardrail_adjustment), inp.guardrail_floor)
             elif rate < initial_rate * (1 - inp.guardrail_band):
                 flex *= 1 + inp.guardrail_adjustment
+        home_gain = home_payments = 0.0
+        for i, h in enumerate(inp.homes):
+            s = homes[i]
+            if not s.owned and h.purchase_age == age:
+                price = h.value * infl * (1 + h.appreciation) ** t
+                goals += price * (h.down_payment + h.closing_costs)
+                goal_names.append(f"Buy {h.name}")
+                loan = price * (1 - h.down_payment)
+                payment = monthly_mortgage_payment(loan, h.mortgage_rate, h.mortgage_years) * 12
+                homes[i] = s = _HomeState(True, price, price, loan, payment, h.mortgage_rate)
+            if not s.owned:
+                continue
+            if h.sale_age == age:
+                proceeds = s.value * (1 - h.selling_costs)
+                home_gain += max(0.0, proceeds - s.basis - HOME_SALE_EXCLUSION[filing])
+                income_by_type["tax_free"] += proceeds - s.balance
+                goal_names.append(f"Sell {h.name}")
+                s.owned, s.balance = False, 0.0
+                continue
+            by_category["housing"] = by_category.get("housing", 0.0) + s.value * h.carrying_costs
+            if s.balance > 0:
+                owed = s.balance * (1 + s.rate)
+                paid = min(s.payment, owed)
+                s.balance = owed - paid
+                home_payments += paid
+
         for category, amount in flexible.items():
             by_category[category] = by_category.get(category, 0.0) + amount * flex
         expenses = sum(by_category.values())
@@ -384,7 +459,7 @@ def simulate(inp: ProjectionInput, returns: list[float] | None = None) -> list[Y
         c_free = (inp.contrib_tax_free * you_work + inp.spouse_contrib_tax_free * spouse_works) * infl
         c_taxable = (inp.contrib_taxable * you_work + inp.spouse_contrib_taxable * spouse_works) * infl
 
-        debt_payments = 0.0
+        debt_payments = home_payments
         for d in debts:
             if d[0] <= 0:
                 continue
@@ -412,7 +487,7 @@ def simulate(inp: ProjectionInput, returns: list[float] | None = None) -> list[Y
                 pre_tax_contributions=c_deferred,
                 deferred_withdrawals=rmd + conversion + extra_deferred,
                 early_withdrawals=extra_deferred if early else 0.0,
-                capital_gains=gains,
+                capital_gains=gains + home_gain,
                 scale=infl,
                 people_65_plus=people_65,
             )
@@ -507,10 +582,15 @@ def simulate(inp: ProjectionInput, returns: list[float] | None = None) -> list[Y
         deferred *= 1 + r
         free *= 1 + r
         other *= 1 + inp.inflation
+        for h, s in zip(inp.homes, homes, strict=True):
+            if s.owned:
+                s.value *= (1 + inp.inflation) * (1 + h.appreciation)
+        home_value = sum(s.value for s in homes if s.owned)
+        mortgages = sum(s.balance for s in homes if s.owned)
 
-        liabilities = sum(d[0] for d in debts)
+        liabilities = sum(d[0] for d in debts) + mortgages
         investable = cash + taxable + deferred + free
-        net_worth = investable + other - liabilities
+        net_worth = investable + other + home_value - liabilities
         deflator = (1 + inp.inflation) ** (t + 1)
         rows.append(
             YearRow(
@@ -538,7 +618,7 @@ def simulate(inp: ProjectionInput, returns: list[float] | None = None) -> list[Y
                 aca_credit=aca_credit,
                 rmd=rmd,
                 roth_conversion=conversion,
-                realized_gains=realized,
+                realized_gains=realized + home_gain,
                 net_cash_flow=net,
                 withdrawals=withdrawals,
                 shortfall=shortfall,
@@ -548,6 +628,8 @@ def simulate(inp: ProjectionInput, returns: list[float] | None = None) -> list[Y
                 tax_deferred=deferred,
                 tax_free=free,
                 other_assets=other,
+                home_value=home_value,
+                home_equity=home_value - mortgages,
                 liabilities=liabilities,
                 investable=investable,
                 net_worth=net_worth,

@@ -22,7 +22,7 @@ from ..finance.social_security import (
 )
 from ..finance.state_tax import STATES
 from ..finance.tax import rmd_start_age
-from ..models import CashFlow, Child, Plan
+from ..models import Account, CashFlow, Child, Home, Plan
 from ..schemas import (
     CashFlowCreate,
     CashFlowOut,
@@ -30,6 +30,9 @@ from ..schemas import (
     ChildCreate,
     ChildOut,
     ChildUpdate,
+    HomeCreate,
+    HomeOut,
+    HomeUpdate,
     PlanCreate,
     PlanOut,
     PlanUpdate,
@@ -96,6 +99,8 @@ def duplicate_plan(plan_id: int, session: Session = Depends(get_session)):
         copy.cash_flows.append(CashFlow(**CashFlowCreate.model_validate(cf, from_attributes=True).model_dump()))
     for child in src.children:
         copy.children.append(Child(**ChildCreate.model_validate(child, from_attributes=True).model_dump()))
+    for home in src.homes:
+        copy.homes.append(Home(**HomeCreate.model_validate(home, from_attributes=True).model_dump()))
     session.add(copy)
     session.commit()
     session.refresh(copy)
@@ -159,6 +164,51 @@ def delete_child(child_id: int, session: Session = Depends(get_session)):
     if child is None:
         raise HTTPException(404, "Child not found")
     session.delete(child)
+    session.commit()
+
+
+def _check_home_links(session: Session, fields: dict) -> None:
+    for key, liability in (("property_account_id", False), ("mortgage_account_id", True)):
+        account_id = fields.get(key)
+        if account_id is None:
+            continue
+        acct = session.get(Account, account_id)
+        if acct is None or acct.is_liability != liability:
+            kind = "a debt" if liability else "an asset"
+            raise HTTPException(422, f"{key} must be the id of {kind} account")
+
+
+@router.post("/plans/{plan_id}/homes", response_model=HomeOut, status_code=201)
+def add_home(plan_id: int, body: HomeCreate, session: Session = Depends(get_session)):
+    plan = get_plan(session, plan_id)
+    fields = body.model_dump()
+    _check_home_links(session, fields)
+    home = Home(plan_id=plan.id, **fields)
+    session.add(home)
+    session.commit()
+    session.refresh(home)
+    return home
+
+
+@router.patch("/homes/{home_id}", response_model=HomeOut)
+def update_home(home_id: int, body: HomeUpdate, session: Session = Depends(get_session)):
+    home = session.get(Home, home_id)
+    if home is None:
+        raise HTTPException(404, "Home not found")
+    fields = body.model_dump(exclude_unset=True)
+    _check_home_links(session, fields)
+    apply_update(home, fields)
+    session.commit()
+    session.refresh(home)
+    return home
+
+
+@router.delete("/homes/{home_id}", status_code=204)
+def delete_home(home_id: int, session: Session = Depends(get_session)):
+    home = session.get(Home, home_id)
+    if home is None:
+        raise HTTPException(404, "Home not found")
+    session.delete(home)
     session.commit()
 
 

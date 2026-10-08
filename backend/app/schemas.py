@@ -267,6 +267,55 @@ class ChildOut(ChildBase):
     plan_id: int
 
 
+class HomeBase(BaseModel):
+    name: str = Field(min_length=1)
+    value: float = Field(0.0, ge=0)
+    purchase_age: int | None = Field(None, ge=0, le=120)
+    cost_basis: float | None = Field(None, ge=0)
+    property_account_id: int | None = None
+    mortgage_account_id: int | None = None
+    mortgage_balance: float = Field(0.0, ge=0)
+    mortgage_payment: float = Field(0.0, ge=0)
+    mortgage_rate: float = Field(0.065, ge=0, le=0.3)
+    down_payment: float = Field(0.2, ge=0, le=1)
+    closing_costs: float = Field(0.03, ge=0, le=0.2)
+    mortgage_years: int = Field(30, ge=1, le=40)
+    appreciation: float = Field(0.0, ge=-0.1, le=0.1)
+    carrying_costs: float = Field(0.0, ge=0, le=0.2)
+    sale_age: int | None = Field(None, ge=0, le=120)
+    selling_costs: float = Field(0.06, ge=0, le=0.2)
+
+
+class HomeCreate(HomeBase):
+    pass
+
+
+class HomeUpdate(BaseModel):
+    name: str | None = Field(None, min_length=1)
+    value: float | None = Field(None, ge=0)
+    purchase_age: int | None = Field(None, ge=0, le=120)
+    cost_basis: float | None = Field(None, ge=0)
+    property_account_id: int | None = None
+    mortgage_account_id: int | None = None
+    mortgage_balance: float | None = Field(None, ge=0)
+    mortgage_payment: float | None = Field(None, ge=0)
+    mortgage_rate: float | None = Field(None, ge=0, le=0.3)
+    down_payment: float | None = Field(None, ge=0, le=1)
+    closing_costs: float | None = Field(None, ge=0, le=0.2)
+    mortgage_years: int | None = Field(None, ge=1, le=40)
+    appreciation: float | None = Field(None, ge=-0.1, le=0.1)
+    carrying_costs: float | None = Field(None, ge=0, le=0.2)
+    sale_age: int | None = Field(None, ge=0, le=120)
+    selling_costs: float | None = Field(None, ge=0, le=0.2)
+
+
+class HomeOut(HomeBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    plan_id: int
+
+
 class PlanOut(PlanBase):
     model_config = ConfigDict(from_attributes=True)
 
@@ -274,6 +323,7 @@ class PlanOut(PlanBase):
     created_at: datetime
     cash_flows: list[CashFlowOut] = []
     children: list[ChildOut] = []
+    homes: list[HomeOut] = []
 
 
 class DebtPayoffRequest(BaseModel):

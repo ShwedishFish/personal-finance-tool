@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .finance.medicare import MEDICARE_AGE
-from .finance.projection import DebtInput, FlowInput, ProjectionInput
+from .finance.projection import DebtInput, FlowInput, HomeInput, ProjectionInput
 from .finance.social_security import annual_benefit, spousal_top_up
 from .models import Account, Child, Plan
 
@@ -151,6 +151,46 @@ def healthcare_flows(plan: Plan, current_age: int, retirement_age: int) -> list[
     return flows
 
 
+def home_inputs(
+    plan: Plan, accounts: list[Account], current_age: int, warnings: list[str]
+) -> tuple[list[HomeInput], set[int]]:
+    """The plan's homes for the engine, and the ids of accounts they replace."""
+    by_id = {a.id: a for a in accounts}
+    homes, linked = [], set()
+    for h in plan.homes:
+        future = h.purchase_age is not None and h.purchase_age >= current_age
+        value, basis = h.value, h.cost_basis
+        balance, payment, rate = h.mortgage_balance, h.mortgage_payment, h.mortgage_rate
+        prop = by_id.get(h.property_account_id) if not future else None
+        loan = by_id.get(h.mortgage_account_id) if not future else None
+        if prop is not None:
+            linked.add(prop.id)
+            value = prop.latest_balance
+            basis = basis if basis is not None else prop.cost_basis
+        if loan is not None:
+            linked.add(loan.id)
+            balance, payment, rate = abs(loan.latest_balance), loan.monthly_payment, loan.interest_rate
+        if not future and balance > 0 and payment <= 0:
+            warnings.append(f"The mortgage on '{h.name}' has no monthly payment set, so its balance only grows.")
+        if h.sale_age is not None and h.sale_age < max(current_age, h.purchase_age or 0):
+            warnings.append(f"'{h.name}' is sold before it is owned; the sale is ignored.")
+        homes.append(
+            HomeInput(
+                h.name, value, h.purchase_age if future else None, basis, balance, payment, rate,
+                h.down_payment, h.closing_costs, h.mortgage_years, h.appreciation, h.carrying_costs,
+                h.sale_age, h.selling_costs,
+            )
+        )
+    owned_now = any(h.purchase_age is None for h in homes)
+    unlinked = [a.name for a in accounts if a.kind == "property" and a.id not in linked]
+    if owned_now and unlinked:
+        warnings.append(
+            f"Property account {', '.join(repr(n) for n in unlinked)} is not linked to a home in this plan, "
+            "so it may be counted twice."
+        )
+    return homes, linked
+
+
 _PLAN = object()  # sentinel: use the plan's own Roth conversion setting
 
 
@@ -216,7 +256,10 @@ def build_projection_input(
     if has_spouse and plan.spouse_retirement_age is not None and spouse_retires < current_age:
         warnings.append("Your spouse's retirement age is in the past; the plan treats them as already retired.")
 
+    inp.homes, linked = home_inputs(plan, accounts, current_age, warnings)
     for acct in accounts:
+        if acct.id in linked:
+            continue
         balance = acct.latest_balance
         if acct.is_liability:
             debt = abs(balance)

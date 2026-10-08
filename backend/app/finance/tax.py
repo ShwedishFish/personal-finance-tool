@@ -15,6 +15,7 @@ BRACKET_TOPS = {
     "married_joint": (24_800, 100_800, 211_400, 403_550, 512_450, 768_700),
 }
 STANDARD_DEDUCTION = {"single": 16_100, "married_joint": 32_200}
+HOME_SALE_EXCLUSION = {"single": 250_000, "married_joint": 500_000}  # main home, not indexed
 AGE_65_EXTRA_DEDUCTION = {"single": 2_050, "married_joint": 1_650}  # per person 65+
 
 SS_WAGE_BASE = 184_500

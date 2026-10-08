@@ -10,8 +10,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..db import get_session
-from ..models import ACCOUNT_KINDS, Account, BalanceSnapshot, CashFlow, Child, Holding, PlaidItem, Plan
-from ..schemas import AccountBase, CashFlowCreate, ChildCreate, PlanCreate
+from ..models import ACCOUNT_KINDS, Account, BalanceSnapshot, CashFlow, Child, Holding, Home, PlaidItem, Plan
+from ..schemas import AccountBase, CashFlowCreate, ChildCreate, HomeCreate, PlanCreate
 from .accounts import upsert_balance
 
 router = APIRouter(prefix="/api", tags=["data"])
@@ -129,6 +129,7 @@ class BackupHolding(BaseModel):
 
 
 class BackupAccount(AccountBase):
+    id: int | None = None  # id at export time, so homes can be relinked on restore
     archived: bool = False
     plaid_account_id: str | None = None
     plaid_item_id: str | None = None  # Plaid's item id, not a database id
@@ -139,6 +140,7 @@ class BackupAccount(AccountBase):
 class BackupPlan(PlanCreate):
     cash_flows: list[CashFlowCreate] = []
     children: list[ChildCreate] = []
+    homes: list[HomeCreate] = []
 
 
 class Backup(BaseModel):
@@ -163,6 +165,7 @@ def export_backup(session: Session = Depends(get_session)):
         accounts.append(
             BackupAccount(
                 **AccountBase.model_validate(acct, from_attributes=True).model_dump(),
+                id=acct.id,
                 archived=acct.archived,
                 plaid_account_id=acct.plaid_account_id,
                 plaid_item_id=item.item_id if item else None,
@@ -201,16 +204,33 @@ def restore_backup(body: RestoreRequest, session: Session = Depends(get_session)
     session.flush()
 
     items = {i.item_id: i for i in session.scalars(select(PlaidItem))}
+    new_ids: dict[int, Account] = {}
     for a in backup.accounts:
-        fields = a.model_dump(exclude={"balances", "holdings", "plaid_item_id"})
+        fields = a.model_dump(exclude={"id", "balances", "holdings", "plaid_item_id"})
         acct = Account(**fields, plaid_item=items.get(a.plaid_item_id))
         acct.balances = [BalanceSnapshot(as_of=b.as_of, balance=b.balance) for b in a.balances]
         acct.holdings = [Holding(**h.model_dump()) for h in a.holdings]
         session.add(acct)
+        if a.id is not None:
+            new_ids[a.id] = acct
+    session.flush()
+
+    def relink(old_id: int | None) -> int | None:
+        acct = new_ids.get(old_id) if old_id is not None else None
+        return acct.id if acct is not None else None
+
     for p in backup.plans:
-        plan = Plan(**p.model_dump(exclude={"cash_flows", "children"}))
+        plan = Plan(**p.model_dump(exclude={"cash_flows", "children", "homes"}))
         plan.cash_flows = [CashFlow(**cf.model_dump()) for cf in p.cash_flows]
         plan.children = [Child(**c.model_dump()) for c in p.children]
+        plan.homes = [
+            Home(**{
+                **h.model_dump(),
+                "property_account_id": relink(h.property_account_id),
+                "mortgage_account_id": relink(h.mortgage_account_id),
+            })
+            for h in p.homes
+        ]
         session.add(plan)
     session.commit()
     return {"accounts": len(backup.accounts), "plans": len(backup.plans)}

@@ -600,6 +600,7 @@ async function renderPlan() {
   renderSocialSecurity(plan, proj);
   renderRoth(plan, proj);
   renderHealth(plan, proj);
+  renderHomes(plan, proj);
   renderSpendingChart(proj.years);
   const years = proj.years;
   const lastRetirement = plan.spouse_birth_year
@@ -676,7 +677,8 @@ async function renderPlan() {
         <td class="num ${y.shortfall ? "bad" : y.net_cash_flow < 0 ? "warn" : ""}">${money(y.net_cash_flow)}</td>
         <td class="num">${y.stock_allocation == null ? "—" : pct(y.stock_allocation, 0)}</td>
         <td class="num">${pct(y.investment_return)}</td>
-        <td class="num">${money(y.investable)}</td><td class="num">${money(y.net_worth)}</td>
+        <td class="num">${money(y.investable)}</td>
+        <td class="num" title="${y.home_value ? `Includes ${money(y.home_equity)} home equity` : ""}">${money(y.net_worth)}</td>
         <td class="num">${money(y.net_worth_real)}</td>
       </tr>`).join("")}`;
 }
@@ -865,6 +867,87 @@ function renderChildren(plan) {
     });
   });
 }
+
+const homeFields = (accounts) => {
+  const pick = (liability) => ({
+    "": "Not linked",
+    ...Object.fromEntries(accounts.filter((a) => a.is_liability === liability).map((a) => [a.id, a.name])),
+  });
+  return [
+    { name: "name", label: "Name", required: true, full: true },
+    { name: "purchase_age", label: "Buy at your age", type: "number", step: 1, help: "Blank = you own it now" },
+    { name: "value", label: "Value or price (today's $)", type: "number", default: 0, help: "Owned now: what it's worth. Buying later: the price today" },
+    { name: "property_account_id", label: "Linked property account", type: "select", numeric: true, options: pick(false), help: "Owned now: uses its balance, and it isn't counted twice" },
+    { name: "mortgage_account_id", label: "Linked mortgage account", type: "select", numeric: true, options: pick(true), help: "Owned now: uses its balance, rate, and payment" },
+    { name: "cost_basis", label: "Paid plus improvements", type: "number", help: "For tax on a sale. Blank = no gain" },
+    { name: "mortgage_balance", label: "Mortgage balance", type: "number", default: 0, help: "Owned now, if not linked" },
+    { name: "mortgage_payment", label: "Monthly payment (principal + interest)", type: "number", default: 0, help: "Owned now, if not linked" },
+    { name: "mortgage_rate", label: "Mortgage rate", type: "percent", default: 0.065 },
+    { name: "mortgage_years", label: "Mortgage term (years)", type: "number", step: 1, default: 30, help: "Buying later" },
+    { name: "down_payment", label: "Down payment", type: "percent", default: 0.2, help: "Buying later; comes from savings" },
+    { name: "closing_costs", label: "Closing costs", type: "percent", default: 0.03, help: "Buying later" },
+    { name: "appreciation", label: "Growth above inflation", type: "percent", default: 0, help: "US homes have averaged roughly 0–1% a year" },
+    { name: "carrying_costs", label: "Property tax, insurance, upkeep", type: "percent", default: 0, help: "% of value per year, e.g. 2%. Leave 0 if they're in Spending" },
+    { name: "sale_age", label: "Sell at your age", type: "number", step: 1, help: "Blank = keep it. Downsize: sell one home and buy another the same year" },
+    { name: "selling_costs", label: "Selling costs", type: "percent", default: 0.06 },
+  ];
+};
+
+const homeBody = (v) => ({
+  ...v,
+  value: v.value ?? 0,
+  mortgage_balance: v.mortgage_balance ?? 0,
+  mortgage_payment: v.mortgage_payment ?? 0,
+});
+
+async function openHomeForm(home) {
+  const accounts = await api("/api/accounts?include_archived=true");
+  openForm({
+    title: home ? `Edit ${home.name}` : "Add home",
+    fields: homeFields(accounts),
+    values: home ?? {},
+    onSubmit: async (v) => {
+      if (home) await api(`/api/homes/${home.id}`, { method: "PATCH", body: homeBody(v) });
+      else await api(`/api/plans/${state.planId}/homes`, { method: "POST", body: homeBody(v) });
+      await loadPlans();
+    },
+  });
+}
+
+function renderHomes(plan, proj) {
+  const table = $("#homes-table");
+  const atRetirement = proj.years.find((y) => y.retired) ?? proj.years.at(-1);
+  const deflate = (y) => (1 + plan.inflation) ** (y.age - proj.years[0].age + 1);
+  table.innerHTML = plan.homes.length
+    ? `<tr><th>Home</th><th>When</th><th class="num">Value</th><th class="num">Mortgage</th><th>Sale</th><th></th></tr>` +
+      plan.homes.map((h) => `
+        <tr><td>${esc(h.name)}</td>
+          <td>${h.purchase_age == null ? "Owned now" : `Buy at ${h.purchase_age}`}</td>
+          <td class="num">${h.property_account_id ? "Linked account" : money(h.value)}</td>
+          <td class="num">${h.mortgage_account_id ? "Linked account"
+            : h.purchase_age != null ? (h.down_payment >= 1 ? "Paid in cash" : `${pct(1 - h.down_payment, 0)} loan at ${pct(h.mortgage_rate, 2)}`)
+            : h.mortgage_balance ? money(h.mortgage_balance) : "—"}</td>
+          <td>${h.sale_age == null ? "Keep" : `Sell at ${h.sale_age}`}</td>
+          <td><button class="link" data-act="edit" data-id="${h.id}">Edit</button>
+              <button class="link danger" data-act="delete" data-id="${h.id}">Delete</button></td></tr>`).join("")
+    : `<tr><td class="muted">No homes in this plan. Property accounts still count toward net worth.</td></tr>`;
+  $("#homes-summary").textContent = plan.homes.length && atRetirement
+    ? `Home equity at ${atRetirement.age}: ${money(atRetirement.home_equity / deflate(atRetirement))} in today's dollars.`
+    : "";
+  table.onclick = guard(async (e) => {
+    const btn = e.target.closest("button[data-act]");
+    if (!btn) return;
+    const home = plan.homes.find((h) => h.id === Number(btn.dataset.id));
+    if (btn.dataset.act === "delete") {
+      await api(`/api/homes/${home.id}`, { method: "DELETE" });
+      await loadPlans();
+      return;
+    }
+    await openHomeForm(home);
+  });
+}
+
+$("#home-add").addEventListener("click", guard(() => openHomeForm(null)));
 
 $("#child-add").addEventListener("click", () =>
   openForm({
