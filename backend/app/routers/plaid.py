@@ -76,6 +76,12 @@ def exchange(body: ExchangeIn, gateway=Depends(get_gateway), session: Session = 
 def sync_all(gateway=Depends(get_gateway), session: Session = Depends(get_session)):
     results = []
     for item in session.scalars(select(PlaidItem)).all():
+        if not item.access_token:
+            raise HTTPException(
+                409,
+                f"The saved bank login for {item.institution_name or 'an institution'} can't be decrypted (its "
+                "encryption key is missing). Remove that institution and connect it again.",
+            )
         results.append({"item_id": item.id, **_plaid_call(sync_item, session, item, gateway)})
     return results
 
@@ -85,7 +91,8 @@ def remove_item(item_id: int, gateway=Depends(get_gateway), session: Session = D
     item = session.get(PlaidItem, item_id)
     if item is None:
         raise HTTPException(404, "Linked institution not found")
-    _plaid_call(gateway.remove_item, item.access_token)
+    if item.access_token:
+        _plaid_call(gateway.remove_item, item.access_token)
     for acct in item.accounts:
         acct.plaid_account_id = None
     session.delete(item)

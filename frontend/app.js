@@ -54,7 +54,7 @@ function formatError(data) {
   return null;
 }
 
-async function api(path, { method = "GET", body } = {}) {
+async function api(path, { method = "GET", body } = {}, retried = false) {
   const res = await fetch(path, {
     method,
     headers: body ? { "Content-Type": "application/json" } : {},
@@ -62,8 +62,39 @@ async function api(path, { method = "GET", body } = {}) {
   });
   if (res.status === 204) return null;
   const data = await res.json().catch(() => null);
+  if (res.status === 401 && data?.detail === "Sign in required" && !retried) {
+    await signIn();
+    return api(path, { method, body }, true);
+  }
   if (!res.ok) throw new Error(formatError(data) || `${res.status} ${res.statusText}`);
   return data;
+}
+
+let signInPromise = null;
+function signIn() {
+  signInPromise ??= new Promise((resolve) => {
+    const dialog = $("#login-dialog");
+    $("#login-error").textContent = "";
+    $("#login-password").value = "";
+    $("#login-form").onsubmit = async (e) => {
+      e.preventDefault();
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: $("#login-password").value, remember: $("#login-remember").checked }),
+      });
+      if (!res.ok) {
+        $("#login-error").textContent = formatError(await res.json().catch(() => null)) || "Could not sign in";
+        return;
+      }
+      dialog.close();
+      signInPromise = null;
+      resolve();
+    };
+    dialog.addEventListener("cancel", (e) => e.preventDefault(), { once: true });
+    dialog.showModal();
+  });
+  return signInPromise;
 }
 
 let toastTimer;
@@ -299,8 +330,61 @@ async function loadAccounts() {
     const acct = accounts.find((a) => a.id === Number(btn.dataset.id));
     await accountAction(btn.dataset.act, acct);
   });
-  await loadPlaid();
+  await Promise.all([loadPlaid(), loadSecurity()]);
 }
+
+// ---------- security ----------
+
+async function loadSecurity() {
+  const s = await api("/api/auth/status");
+  const keys = s.bank_links
+    ? `Bank logins are encrypted, with the key kept in your ${esc(s.key_location)}.`
+    : "Bank logins are encrypted when you connect an institution, with the key kept in your system keychain.";
+  $("#security-status").innerHTML = (s.password_enabled
+    ? "A password is required to open the app in a browser. "
+    : "Anyone using this computer can open the app in a browser. Set a password to require signing in. ") +
+    `${keys} The app only accepts connections from this computer. Turn on FileVault (System Settings →
+    Privacy &amp; Security) so the database is encrypted on disk.`;
+  $("#pw-set").textContent = s.password_enabled ? "Change password" : "Set password";
+  $("#pw-remove").hidden = !s.password_enabled;
+  $("#pw-signout").hidden = !s.password_enabled;
+}
+
+$("#pw-set").addEventListener("click", guard(async () => {
+  const { password_enabled: enabled } = await api("/api/auth/status");
+  openForm({
+    title: enabled ? "Change password" : "Set a password",
+    fields: [
+      ...(enabled ? [{ name: "current_password", label: "Current password", type: "password", required: true, full: true }] : []),
+      { name: "new_password", label: "New password (at least 8 characters)", type: "password", required: true, full: true },
+      { name: "confirm", label: "Repeat new password", type: "password", required: true, full: true,
+        help: "If you forget it, run scripts/reset-password.sh. Your data is not encrypted with it, so nothing is lost." },
+    ],
+    onSubmit: async (v) => {
+      if (v.new_password !== v.confirm) throw new Error("The new passwords don't match");
+      await api("/api/auth/password", { method: "PUT", body: { current_password: v.current_password, new_password: v.new_password } });
+      toast(enabled ? "Password changed. Other browsers are signed out." : "Password set");
+      await loadSecurity();
+    },
+  });
+}));
+
+$("#pw-remove").addEventListener("click", () =>
+  openForm({
+    title: "Remove password",
+    fields: [{ name: "current_password", label: "Current password", type: "password", required: true, full: true }],
+    onSubmit: async (v) => {
+      await api("/api/auth/password", { method: "PUT", body: { current_password: v.current_password, new_password: null } });
+      toast("Password removed");
+      await loadSecurity();
+    },
+  })
+);
+
+$("#pw-signout").addEventListener("click", guard(async () => {
+  await api("/api/auth/logout", { method: "POST" });
+  location.reload();
+}));
 
 async function accountAction(act, acct) {
   if (act === "balance") {

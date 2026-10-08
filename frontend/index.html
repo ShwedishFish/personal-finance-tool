@@ -65,6 +65,17 @@
       </div>
       <div class="panel">
         <div class="panel-head">
+          <h2>Security</h2>
+          <div class="actions">
+            <button id="pw-signout" hidden>Sign out</button>
+            <button id="pw-remove" class="danger" hidden>Remove password</button>
+            <button id="pw-set" class="primary">Set password</button>
+          </div>
+        </div>
+        <p class="muted" id="security-status"></p>
+      </div>
+      <div class="panel">
+        <div class="panel-head">
           <h2>Backup &amp; restore</h2>
           <div class="actions">
             <a class="button" href="/api/backup">Download backup</a>
@@ -299,6 +310,19 @@
         <button value="cancel" formnovalidate>Cancel</button>
         <button value="ok" class="primary">Save</button>
       </div>
+    </form>
+  </dialog>
+
+  <dialog id="login-dialog">
+    <form id="login-form">
+      <h2>Sign in</h2>
+      <div class="fields">
+        <label class="full"><span>Password</span><input type="password" id="login-password" autocomplete="current-password" required autofocus /></label>
+        <label class="check full"><input type="checkbox" id="login-remember" checked /><span>Stay signed in on this computer for 30 days</span></label>
+      </div>
+      <p class="error" id="login-error"></p>
+      <p class="muted">Forgot it? Run <code>scripts/reset-password.sh</code> in the app folder. Your data is not locked by the password.</p>
+      <div class="actions end"><button class="primary">Sign in</button></div>
     </form>
   </dialog>
 

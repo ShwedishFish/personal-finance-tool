@@ -1,13 +1,20 @@
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from .auth import require_auth
 from .db import init_db
-from .routers import accounts, data, insights, plaid, plans, spending
+from .routers import accounts, auth, data, insights, plaid, plans, spending
 
 FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
+# Rejecting other Host headers stops web pages from reading the API through DNS rebinding.
+ALLOWED_HOSTS = ["127.0.0.1", "localhost", "testserver"] + [
+    h.strip() for h in os.getenv("PFT_ALLOWED_HOSTS", "").split(",") if h.strip()
+]
 
 
 @asynccontextmanager
@@ -17,12 +24,10 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="Personal Finance Tool", lifespan=lifespan)
-app.include_router(accounts.router)
-app.include_router(plans.router)
-app.include_router(insights.router)
-app.include_router(plaid.router)
-app.include_router(data.router)
-app.include_router(spending.router)
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
+app.include_router(auth.router)
+for module in (accounts, plans, insights, plaid, data, spending):
+    app.include_router(module.router, dependencies=[Depends(require_auth)])
 
 
 @app.get("/api/health")

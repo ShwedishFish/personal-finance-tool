@@ -1,9 +1,15 @@
-import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy.orm import sessionmaker
+import os
 
-from app.db import get_session, init_db, make_engine
-from app.main import app
+from cryptography.fernet import Fernet
+
+os.environ.setdefault("PFT_SECRET_KEY", Fernet.generate_key().decode())  # never touch the real keychain
+
+import pytest  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
+from sqlalchemy.orm import sessionmaker  # noqa: E402
+
+from app.db import get_session, init_db, make_engine  # noqa: E402
+from app.main import app  # noqa: E402
 
 
 @pytest.fixture

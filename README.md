@@ -91,8 +91,22 @@ running. It serves the code as of its last start, so after pulling changes run `
    `user_good` / `pass_good`.
 
 For real accounts, request Production access in the Plaid dashboard and set `PLAID_ENV=production`.
-Plaid access tokens are stored in your local database (`data/finance.db`), which is gitignored —
-treat that file as sensitive.
+Plaid access tokens are encrypted in the local database (see below).
+
+## Security and privacy
+
+- Everything stays on your computer in `data/finance.db` (gitignored, readable only by your user).
+  Turn on FileVault (or your OS's disk encryption) so the database is encrypted on disk.
+- Plaid access tokens are encrypted with a key kept outside the database: in the macOS Keychain
+  (or Windows Credential Manager / Linux Secret Service), else `~/.config/personal-finance-tool/secret.key`,
+  or the `PFT_SECRET_KEY` environment variable if set. If the key is lost, only the bank links are
+  affected: remove and reconnect those institutions.
+- **Optional password** (Accounts → Security): require signing in before the browser can read
+  anything. It protects against someone using your unlocked computer; it doesn't encrypt the data,
+  so forgetting it loses nothing: run `scripts/reset-password.sh`.
+- The server listens only on 127.0.0.1 and rejects requests whose `Host` isn't `127.0.0.1` or
+  `localhost`, so web pages can't read it through DNS rebinding. To reach it under another name
+  (for example behind your own reverse proxy), list it in `PFT_ALLOWED_HOSTS`.
 
 ## How the projection works
 
@@ -152,6 +166,7 @@ backend/app/
   routers/      FastAPI endpoints
   plaid_*.py    Plaid client wrapper and account sync
   transactions.py  transaction categorizing, CSV import, and actual-vs-plan summary
+  auth.py, crypto.py  optional app password; encryption of stored secrets
 frontend/       static HTML/JS/CSS (no build step)
 tests/
 ```

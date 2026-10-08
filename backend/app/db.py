@@ -6,6 +6,7 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from .config import settings
+from .crypto import PREFIX, encrypt
 
 
 class Base(DeclarativeBase):
@@ -76,6 +77,27 @@ def upgrade_schema(bind) -> None:
                 ))
                 conn.execute(text("ALTER TABLE cash_flows DROP COLUMN taxable"))
 
+        plaintext = conn.execute(
+            text("SELECT id, access_token FROM plaid_items WHERE access_token NOT LIKE :p"), {"p": f"{PREFIX}%"}
+        ).all()
+        for row_id, token in plaintext:
+            conn.execute(
+                text("UPDATE plaid_items SET access_token = :t WHERE id = :i"), {"t": encrypt(token), "i": row_id}
+            )
+
+
+def restrict_permissions(bind) -> None:
+    """Make the SQLite file and its folder readable only by you."""
+    path = bind.url.database
+    if bind.url.get_backend_name() != "sqlite" or not path or path == ":memory:":
+        return
+    db = Path(path)
+    for target, mode in ((db.parent, 0o700), (db, 0o600)):
+        try:
+            target.chmod(mode)
+        except OSError:
+            pass
+
 
 def init_db(bind=None) -> None:
     from . import models  # noqa: F401  (registers tables)
@@ -83,6 +105,7 @@ def init_db(bind=None) -> None:
     bind = bind or engine
     Base.metadata.create_all(bind=bind)
     upgrade_schema(bind)
+    restrict_permissions(bind)
 
 
 def get_session() -> Iterator[Session]:

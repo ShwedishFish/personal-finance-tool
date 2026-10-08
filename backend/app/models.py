@@ -3,6 +3,7 @@ from datetime import date, datetime
 from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from .crypto import EncryptedString
 from .db import Base
 
 ACCOUNT_KINDS = {
@@ -25,7 +26,7 @@ class PlaidItem(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     item_id: Mapped[str] = mapped_column(String, unique=True)
-    access_token: Mapped[str] = mapped_column(String)
+    access_token: Mapped[str] = mapped_column(EncryptedString)
     institution_name: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -265,3 +266,10 @@ class CategoryRule(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     match: Mapped[str] = mapped_column(String, unique=True)  # normalized merchant or description
     category: Mapped[str] = mapped_column(String)
+
+
+class AppSetting(Base):
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String, primary_key=True)
+    value: Mapped[str] = mapped_column(String)
