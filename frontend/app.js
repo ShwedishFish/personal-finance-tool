@@ -475,6 +475,11 @@ const planFields = [
   { name: "return_volatility", label: "Return volatility", type: "percent", default: 0.15, help: "Single-return model only" },
   { name: "cash_return", label: "Cash interest", type: "percent", default: 0.03 },
   { name: "withdrawal_rate", label: "Safe withdrawal rate", type: "percent", default: 0.04, help: "Used for the FI number" },
+  { name: "guardrails", label: "Spending guardrails (Guyton-Klinger)", type: "checkbox", full: true,
+    help: "Once retired, cut flexible spending after bad markets and raise it after good ones. Housing, utilities, insurance, healthcare, and kids stay fixed." },
+  { name: "guardrail_band", label: "Guardrail width", type: "percent", default: 0.2, help: "How far the withdrawal rate may drift from its starting level" },
+  { name: "guardrail_adjustment", label: "Adjustment size", type: "percent", default: 0.1, help: "Cut or raise per trigger" },
+  { name: "guardrail_floor", label: "Lowest flexible spending", type: "percent", default: 0.7, help: "Share of planned flexible spending you'd accept" },
   { name: "filing_status", label: "Filing status", type: "select", options: FILING_LABELS },
   { name: "spouse_birth_year", label: "Spouse birth year", type: "number", step: 1, help: "Blank if planning alone" },
   { name: "spouse_retirement_age", label: "Spouse retires at age", type: "number", step: 1, help: "Spouse's age. Blank = same year as you" },
@@ -597,6 +602,9 @@ async function renderPlan() {
 
   $("#plan-cards").innerHTML = [
     card("Chance of success", pct(rate, 0), `${proj.monte_carlo.simulations} Monte Carlo runs`, scoreClass(rate)),
+    ...(plan.guardrails ? [card("Guardrail cuts", `To ${pct(proj.monte_carlo.lowest_spending_p10, 0)}`,
+      `Flexible spending in the worst 10% of markets (median low ${pct(proj.monte_carlo.lowest_spending_p50, 0)})`,
+      proj.monte_carlo.lowest_spending_p10 <= plan.guardrail_floor + 1e-9 ? "warn" : "")] : []),
     card("FI number", money(proj.fi_number), `${pct(plan.withdrawal_rate)} of retirement spending`),
     card("FI age", proj.fi_age ?? "Not reached", "Expected path"),
     card(
@@ -647,7 +655,10 @@ async function renderPlan() {
       <tr class="${y.retired ? "retired" : ""}">
         <td>${y.year}</td><td>${ageCell(y)}</td><td class="num">${money(y.income)}</td>
         <td class="num" title="Federal ${money(y.tax_federal)} · State ${money(y.tax_state)} · Payroll ${money(y.tax_fica)} · Early-withdrawal penalty ${money(y.tax_penalty)} · Capital gains realized ${money(y.realized_gains)}">${money(y.taxes)}</td>
-        <td class="num" title="${y.irmaa ? `Includes ${money(y.irmaa)} Medicare IRMAA surcharge` : ""}">${money(y.expenses)}</td>
+        <td class="num ${y.spending_adjustment < 0.999 ? "warn" : ""}" title="${[
+          y.irmaa ? `Includes ${money(y.irmaa)} Medicare IRMAA surcharge` : "",
+          Math.abs(y.spending_adjustment - 1) > 0.001 ? `Guardrails: flexible spending at ${pct(y.spending_adjustment, 0)} of plan` : "",
+        ].filter(Boolean).join(" · ")}">${money(y.expenses)}</td>
         <td class="num" title="${esc(y.goal_names.join(", "))}">${y.goals ? money(y.goals) : "—"}</td>
         <td class="num">${y.debt_payments ? money(y.debt_payments) : "—"}</td>
         <td class="num">${y.contributions ? money(y.contributions) : "—"}</td>

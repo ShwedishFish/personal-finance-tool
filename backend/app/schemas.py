@@ -95,6 +95,10 @@ class PlanBase(BaseModel):
     expected_return: float = Field(0.07, ge=-0.2, le=0.3)
     retirement_return: float = Field(0.05, ge=-0.2, le=0.3)
     return_volatility: float = Field(0.15, ge=0, le=1)
+    guardrails: bool = False
+    guardrail_band: float = Field(0.2, gt=0, le=1)
+    guardrail_adjustment: float = Field(0.1, gt=0, le=0.5)
+    guardrail_floor: float = Field(0.7, ge=0, le=1)
     return_model: ReturnModel = "allocation"
     stock_return: float = Field(0.085, ge=-0.2, le=0.3)
     bond_return: float = Field(0.045, ge=-0.2, le=0.3)
@@ -138,6 +142,10 @@ class PlanUpdate(BaseModel):
     expected_return: float | None = Field(None, ge=-0.2, le=0.3)
     retirement_return: float | None = Field(None, ge=-0.2, le=0.3)
     return_volatility: float | None = Field(None, ge=0, le=1)
+    guardrails: bool | None = None
+    guardrail_band: float | None = Field(None, gt=0, le=1)
+    guardrail_adjustment: float | None = Field(None, gt=0, le=0.5)
+    guardrail_floor: float | None = Field(None, ge=0, le=1)
     return_model: ReturnModel | None = None
     stock_return: float | None = Field(None, ge=-0.2, le=0.3)
     bond_return: float | None = Field(None, ge=-0.2, le=0.3)

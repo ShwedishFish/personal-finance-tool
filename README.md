@@ -98,6 +98,10 @@ treat that file as sensitive.
   yearly stock and bond returns from normal distributions. A simpler model with one return
   before and one after retirement is available under Assumptions. It is a planning aid, not a
   prediction.
+- Optional Guyton-Klinger spending guardrails: once everyone is retired, flexible spending is cut
+  10% when the withdrawal rate rises 20% above where it started (except in the final 15 years) and
+  raised 10% when it falls 20% below, never below a floor you choose. Housing, utilities,
+  insurance, healthcare, kids, and education are never cut.
 - The historical backtest replays the plan through every complete stretch of actual US returns
   since 1928 (S&P 500 and 10-year Treasuries, from
   [Damodaran, NYU Stern](https://pages.stern.nyu.edu/~adamodar/New_Home_Page/datafile/histretSP.html)).

@@ -28,6 +28,8 @@ EMBEDDED_GAINS_RATE = 0.15  # assumed tax on unrealized gains, for after-tax com
 
 TAX_TYPES = ("wages", "ordinary", "social_security", "tax_free")
 SURVIVOR_UNSCALED_CATEGORIES = ("kids", "education")
+GUARDRAIL_FIXED_CATEGORIES = ("housing", "utilities", "healthcare", "insurance", "kids", "education")
+GUARDRAIL_NO_CUT_YEARS = 15  # Guyton-Klinger: no cuts in the plan's final 15 years
 
 
 @dataclass
@@ -84,6 +86,13 @@ class ProjectionInput:
     effective_tax_rate: float = 0.15  # used when tax_mode == "flat"
     state_tax_rate: float = 0.0
     withdrawal_rate: float = 0.04
+    # Guyton-Klinger guardrails on flexible spending once everyone is retired: if the withdrawal
+    # rate drifts more than `guardrail_band` above (below) its starting level, cut (raise)
+    # flexible spending by `guardrail_adjustment`, never below `guardrail_floor` of the plan.
+    guardrails: bool = False
+    guardrail_band: float = 0.2
+    guardrail_adjustment: float = 0.1
+    guardrail_floor: float = 0.7
     spouse_current_age: int | None = None
     spouse_life_expectancy: int | None = None  # in the spouse's age; None = outlives the plan
     spouse_retirement_age: int | None = None  # in the spouse's age; None = the same year as you
@@ -164,6 +173,7 @@ class YearRow:
     retired: bool
     stock_allocation: float | None
     investment_return: float
+    spending_adjustment: float  # guardrail multiplier on flexible spending; 1.0 = as planned
     income: float
     taxes: float
     tax_federal: float
@@ -293,8 +303,11 @@ def simulate(inp: ProjectionInput, returns: list[float] | None = None) -> list[Y
     convert = inp.roth_conversion_rate is not None and inp.tax_mode == "progressive"
     magi_history: list[float] = []
     rows: list[YearRow] = []
+    flex = 1.0
+    initial_rate: float | None = None
 
     for t, age in enumerate(_years(inp)):
+        investable_start = cash + taxable + deferred + free
         infl = (1 + inp.inflation) ** t
         retired = age >= inp.last_retirement_age
         r = returns[t] if returns is not None else _mean_return(inp, age)
@@ -315,6 +328,7 @@ def simulate(inp: ProjectionInput, returns: list[float] | None = None) -> list[Y
         expenses = goals = 0.0
         goal_names: list[str] = []
         by_category: dict[str, float] = {}
+        flexible: dict[str, float] = {}
         for f in inp.flows:
             if not f.active(age):
                 continue
@@ -335,13 +349,26 @@ def simulate(inp: ProjectionInput, returns: list[float] | None = None) -> list[Y
             else:
                 if widowed and not f.owner and f.category not in SURVIVOR_UNSCALED_CATEGORIES:
                     nominal *= inp.survivor_spending
-                expenses += nominal
-                by_category[f.category] = by_category.get(f.category, 0.0) + nominal
+                bucket = by_category if f.category in GUARDRAIL_FIXED_CATEGORIES else flexible
+                bucket[f.category] = bucket.get(f.category, 0.0) + nominal
         # A surviving spouse keeps the larger of the two retirement benefits.
         if widowed:
             income_by_type["social_security"] += max(own_benefit.values())
         else:
             income_by_type["social_security"] += sum(own_benefit.values())
+
+        if inp.guardrails and retired and investable_start > 0:
+            fixed, flex_total = sum(by_category.values()), sum(flexible.values())
+            rate = max(fixed + flex_total * flex - sum(income_by_type.values()), 0.0) / investable_start
+            if initial_rate is None:
+                initial_rate = rate
+            elif rate > initial_rate * (1 + inp.guardrail_band) and inp.end_age - age >= GUARDRAIL_NO_CUT_YEARS:
+                flex = max(flex * (1 - inp.guardrail_adjustment), inp.guardrail_floor)
+            elif rate < initial_rate * (1 - inp.guardrail_band):
+                flex *= 1 + inp.guardrail_adjustment
+        for category, amount in flexible.items():
+            by_category[category] = by_category.get(category, 0.0) + amount * flex
+        expenses = sum(by_category.values())
 
         you_work = self_alive and age < inp.retirement_age
         spouse_works = bool(spouse_alive) and age < spouse_retires
@@ -479,6 +506,7 @@ def simulate(inp: ProjectionInput, returns: list[float] | None = None) -> list[Y
                 tax_fica=tax.fica,
                 tax_penalty=tax.penalty,
                 expenses=expenses,
+                spending_adjustment=flex,
                 goals=goals,
                 debt_payments=debt_payments,
                 contributions=c_deferred + c_free + c_taxable,
@@ -539,9 +567,11 @@ def summarize_paths(inp: ProjectionInput, paths, outcomes: list | None = None) -
     by_year: list[list[float]] = [[] for _ in ages]
     successes = runs = 0
     depletion_ages: list[int] = []
+    lowest_spending: list[float] = []
     for returns in paths:
         runs += 1
         rows = simulate(inp, returns)
+        lowest_spending.append(min((row.spending_adjustment for row in rows), default=1.0))
         failed_at = next((row.age for row in rows if row.shortfall > 0), None)
         if failed_at is None:
             successes += 1
@@ -563,7 +593,11 @@ def summarize_paths(inp: ProjectionInput, paths, outcomes: list | None = None) -
             }
         )
     depletion_ages.sort()
+    lowest_spending.sort()
     return {
+        # Lowest guardrail multiplier on flexible spending reached in a path (1.0 without guardrails).
+        "lowest_spending_p10": _percentile(lowest_spending, 0.1) if lowest_spending else 1.0,
+        "lowest_spending_p50": _percentile(lowest_spending, 0.5) if lowest_spending else 1.0,
         "simulations": runs,
         "success_rate": successes / runs if runs else 0.0,
         "median_depletion_age": _percentile(depletion_ages, 0.5) if depletion_ages else None,
