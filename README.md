@@ -98,6 +98,10 @@ treat that file as sensitive.
   yearly stock and bond returns from normal distributions. A simpler model with one return
   before and one after retirement is available under Assumptions. It is a planning aid, not a
   prediction.
+- Before Medicare, ACA marketplace premium tax credits are applied each year from household
+  income (AGI plus all Social Security) and a benchmark silver premium you set, under the 2026
+  rules: IRS Rev. Proc. 2025-25 percentages and no credit above 400% of the poverty line. Below
+  100% of the poverty line the model assumes the cheapest band rather than Medicaid.
 - Optional Guyton-Klinger spending guardrails: once everyone is retired, flexible spending is cut
   10% when the withdrawal rate rises 20% above where it started (except in the final 15 years) and
   raised 10% when it falls 20% below, never below a floor you choose. Housing, utilities,

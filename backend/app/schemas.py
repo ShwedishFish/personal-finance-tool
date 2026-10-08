@@ -124,6 +124,8 @@ class PlanBase(BaseModel):
     pre_medicare_cost: float = Field(12_000, ge=0, le=200_000)
     medicare_cost: float = Field(7_000, ge=0, le=200_000)
     health_cost_growth: float = Field(0.02, ge=-0.05, le=0.1)
+    aca_subsidies: bool = True
+    aca_benchmark_premium: float = Field(10_000, ge=0, le=200_000)
     roth_conversion_rate: RothBracket | None = None
     roth_start_age: int | None = Field(None, ge=18, le=100)
     roth_end_age: int | None = Field(None, ge=18, le=100)
@@ -171,6 +173,8 @@ class PlanUpdate(BaseModel):
     pre_medicare_cost: float | None = Field(None, ge=0, le=200_000)
     medicare_cost: float | None = Field(None, ge=0, le=200_000)
     health_cost_growth: float | None = Field(None, ge=-0.05, le=0.1)
+    aca_subsidies: bool | None = None
+    aca_benchmark_premium: float | None = Field(None, ge=0, le=200_000)
     roth_conversion_rate: RothBracket | None = None
     roth_start_age: int | None = Field(None, ge=18, le=100)
     roth_end_age: int | None = Field(None, ge=18, le=100)

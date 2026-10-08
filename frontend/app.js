@@ -543,6 +543,10 @@ const healthFields = [
   { name: "pre_medicare_cost", label: "Before Medicare, per person per year", type: "number", default: 12000, help: "Premiums + out-of-pocket from retirement until 65; 0 if covered (e.g. retiree plan)" },
   { name: "medicare_cost", label: "On Medicare, per person per year", type: "number", default: 7000, help: "Part B, Part D, Medigap, out-of-pocket; IRMAA is added automatically" },
   { name: "health_cost_growth", label: "Growth above inflation", type: "percent", default: 0.02, help: "Healthcare costs historically outpace inflation" },
+  { name: "aca_subsidies", label: "Apply ACA premium tax credits before Medicare", type: "checkbox", default: true, full: true,
+    help: "Marketplace credits for household income up to 400% of the poverty line (2026 rules; the larger pandemic-era credits expired)" },
+  { name: "aca_benchmark_premium", label: "Benchmark silver premium, per person per year", type: "number", default: 10000,
+    help: "Second-lowest silver plan for your age and ZIP on healthcare.gov; capped at the cost above" },
 ];
 
 const ROTH_LABELS = {
@@ -657,6 +661,7 @@ async function renderPlan() {
         <td class="num" title="Federal ${money(y.tax_federal)} · State ${money(y.tax_state)} · Payroll ${money(y.tax_fica)} · Early-withdrawal penalty ${money(y.tax_penalty)} · Capital gains realized ${money(y.realized_gains)}">${money(y.taxes)}</td>
         <td class="num ${y.spending_adjustment < 0.999 ? "warn" : ""}" title="${[
           y.irmaa ? `Includes ${money(y.irmaa)} Medicare IRMAA surcharge` : "",
+          y.aca_credit ? `After ${money(y.aca_credit)} ACA premium tax credit` : "",
           Math.abs(y.spending_adjustment - 1) > 0.001 ? `Guardrails: flexible spending at ${pct(y.spending_adjustment, 0)} of plan` : "",
         ].filter(Boolean).join(" · ")}">${money(y.expenses)}</td>
         <td class="num" title="${esc(y.goal_names.join(", "))}">${y.goals ? money(y.goals) : "—"}</td>
@@ -990,12 +995,15 @@ function renderHealth(plan, proj) {
   const total = years.reduce((s, y) => s + (y.expenses_by_category_real.healthcare ?? 0), 0);
   const irmaa = years.reduce((s, y) => s + real(y, y.irmaa), 0);
   const irmaaYears = years.filter((y) => y.irmaa > 0).length;
+  const aca = years.reduce((s, y) => s + real(y, y.aca_credit), 0);
+  const acaYears = years.filter((y) => y.aca_credit > 0).length;
   const people = plan.spouse_birth_year ? "each of you" : "you";
   $("#health-summary").innerHTML = `
     <table>
       <tr><td>Before Medicare</td><td class="num">${money(plan.pre_medicare_cost)}/yr for ${people}</td></tr>
       <tr><td>On Medicare</td><td class="num">${money(plan.medicare_cost)}/yr for ${people}</td></tr>
       <tr><td>Growth above inflation</td><td class="num">${pct(plan.health_cost_growth)}</td></tr>
+      <tr><td>ACA premium credits</td><td class="num ${aca ? "good" : ""}">${!plan.aca_subsidies ? "Off" : aca ? `−${money(aca)} over ${acaYears} yrs` : "None (income too high or no gap before 65)"}</td></tr>
       <tr><td>IRMAA surcharges</td><td class="num ${irmaa ? "warn" : ""}">${irmaa ? `${money(irmaa)} over ${irmaaYears} yrs` : "None"}</td></tr>
       <tr class="subtotal"><td>Lifetime healthcare</td><td class="num">${money(total)}</td></tr>
     </table>

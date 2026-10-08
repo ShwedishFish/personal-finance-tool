@@ -8,6 +8,7 @@ Each simulated year applies cash flows first, then investment growth.
 import random
 from dataclasses import asdict, dataclass, field, replace
 
+from .aca import premium_tax_credit
 from .historical_data import ANNUAL_RETURNS
 from .medicare import IRMAA_LOOKBACK_YEARS, MEDICARE_AGE, irmaa_surcharge
 from .tax import (
@@ -15,6 +16,7 @@ from .tax import (
     TaxBreakdown,
     TaxProfile,
     YearIncome,
+    aca_income,
     adjusted_gross_income,
     bracket_ceiling,
     income_tax,
@@ -114,6 +116,9 @@ class ProjectionInput:
     spouse_contrib_tax_free: float = 0.0
     debts: list[DebtInput] = field(default_factory=list)
     flows: list[FlowInput] = field(default_factory=list)
+    # Benchmark silver premiums for marketplace coverage before Medicare; each year the ACA credit
+    # is computed from the active ones and household income.
+    aca_benchmarks: list[FlowInput] = field(default_factory=list)
 
     @property
     def birth_year(self) -> int:
@@ -185,6 +190,7 @@ class YearRow:
     debt_payments: float
     contributions: float
     irmaa: float
+    aca_credit: float  # ACA premium tax credit, already netted out of expenses
     rmd: float
     roth_conversion: float
     realized_gains: float
@@ -478,6 +484,22 @@ def simulate(inp: ProjectionInput, returns: list[float] | None = None) -> list[Y
                 shortfall = need
         magi_history.append(adjusted_gross_income(profile, year_income(drawn_deferred, realized)))
 
+        # The ACA credit is reconciled on the tax return, so it comes back after the year's withdrawals.
+        aca_credit = 0.0
+        benchmark = sum(
+            f.amount * infl * (1 + f.real_growth) ** t
+            for f in inp.aca_benchmarks
+            if f.active(age) and alive.get(f.owner, True)
+        )
+        if benchmark > 0:
+            household = int(self_alive) + int(bool(spouse_alive)) if inp.has_spouse else 1
+            magi = aca_income(year_income(drawn_deferred, realized))
+            aca_credit = premium_tax_credit(magi, household, benchmark, infl)
+            taxable += aca_credit
+            basis += aca_credit
+            expenses -= aca_credit
+            by_category["healthcare"] = by_category.get("healthcare", 0.0) - aca_credit
+
         cash *= 1 + inp.cash_return
         taxable *= 1 + r
         deferred *= 1 + r
@@ -511,6 +533,7 @@ def simulate(inp: ProjectionInput, returns: list[float] | None = None) -> list[Y
                 debt_payments=debt_payments,
                 contributions=c_deferred + c_free + c_taxable,
                 irmaa=irmaa,
+                aca_credit=aca_credit,
                 rmd=rmd,
                 roth_conversion=conversion,
                 realized_gains=realized,

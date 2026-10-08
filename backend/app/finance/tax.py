@@ -164,6 +164,12 @@ def adjusted_gross_income(profile: TaxProfile, y: YearIncome) -> float:
     return income + y.capital_gains
 
 
+def aca_income(y: YearIncome) -> float:
+    """MAGI for ACA credits: AGI plus untaxed Social Security, i.e. all Social Security counts."""
+    return max(0.0, y.wages - y.pre_tax_contributions) + y.ordinary + y.deferred_withdrawals + y.social_security \
+        + y.capital_gains
+
+
 def ordinary_taxable_income(profile: TaxProfile, y: YearIncome) -> float:
     income, deduction = _ordinary_parts(profile, y)
     return max(0.0, income - deduction)

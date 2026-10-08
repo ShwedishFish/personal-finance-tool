@@ -140,6 +140,8 @@ class Plan(Base):
     pre_medicare_cost: Mapped[float] = mapped_column(Float, default=12_000)  # per person per year
     medicare_cost: Mapped[float] = mapped_column(Float, default=7_000)  # per person per year, before IRMAA
     health_cost_growth: Mapped[float] = mapped_column(Float, default=0.02)  # above inflation
+    aca_subsidies: Mapped[bool] = mapped_column(Boolean, default=True)
+    aca_benchmark_premium: Mapped[float] = mapped_column(Float, default=10_000)  # per person per year
     roth_conversion_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
     roth_start_age: Mapped[int | None] = mapped_column(Integer, nullable=True)
     roth_end_age: Mapped[int | None] = mapped_column(Integer, nullable=True)

@@ -106,18 +106,37 @@ def spouse_retirement_in_your_age(plan: Plan, retirement_age: int) -> int:
     return plan.spouse_retirement_age + spouse_offset(plan)
 
 
+def _health_people(plan: Plan, current_age: int, retirement_age: int):
+    """(name suffix, owner, first pre-Medicare year, Medicare start) per person, in your age."""
+    people = [("", "self", 0, retirement_age)]
+    if plan.spouse_birth_year:
+        people.append((" (spouse)", "spouse", spouse_offset(plan), spouse_retirement_in_your_age(plan, retirement_age)))
+    return [
+        (suffix, owner, max(retires, current_age), MEDICARE_AGE + offset)
+        for suffix, owner, offset, retires in people
+    ]
+
+
+def aca_benchmark_flows(plan: Plan, current_age: int, retirement_age: int) -> list[FlowInput]:
+    """Benchmark silver premiums while each person buys marketplace coverage before Medicare."""
+    if not plan.aca_subsidies or plan.pre_medicare_cost <= 0:
+        return []
+    premium = min(plan.aca_benchmark_premium, plan.pre_medicare_cost)
+    return [
+        FlowInput(f"ACA benchmark premium{suffix}", "expense", premium, pre_start, medicare_start - 1,
+                  plan.health_cost_growth, category="healthcare", owner=owner)
+        for suffix, owner, pre_start, medicare_start in _health_people(plan, current_age, retirement_age)
+        if premium > 0 and pre_start < medicare_start
+    ]
+
+
 def healthcare_flows(plan: Plan, current_age: int, retirement_age: int) -> list[FlowInput]:
     """Per-person health costs from each person's retirement: private insurance until Medicare, then
     Medicare-era costs. While working, coverage is assumed to come through work and regular spending.
     """
-    people = [("", "self", 0, retirement_age)]
-    if plan.spouse_birth_year:
-        people.append((" (spouse)", "spouse", spouse_offset(plan), spouse_retirement_in_your_age(plan, retirement_age)))
     end = plan_end_age(plan)
     flows = []
-    for suffix, owner, offset, retires in people:
-        medicare_start = MEDICARE_AGE + offset  # in your age
-        pre_start = max(retires, current_age)
+    for suffix, owner, pre_start, medicare_start in _health_people(plan, current_age, retirement_age):
         if plan.pre_medicare_cost > 0 and pre_start < medicare_start:
             flows.append(
                 FlowInput(f"Health insurance before Medicare{suffix}", "expense", plan.pre_medicare_cost,
@@ -267,6 +286,7 @@ def build_projection_input(
             "they may overlap."
         )
     inp.flows.extend(health)
+    inp.aca_benchmarks = aca_benchmark_flows(plan, current_age, retirement_age)
 
     ss_flows = social_security_flows(plan, current_age, ss_claim_age)
     if ss_flows and any(f.tax_type == "social_security" for f in inp.flows):
