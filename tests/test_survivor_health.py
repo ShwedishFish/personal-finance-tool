@@ -78,7 +78,7 @@ def test_healthcare_flows_by_person():
     year = date.today().year
     plan = SimpleNamespace(
         birth_year=year - 55, spouse_birth_year=year - 53, life_expectancy=95, spouse_life_expectancy=95,
-        pre_medicare_cost=12_000, medicare_cost=7_000, health_cost_growth=0.02,
+        pre_medicare_cost=12_000, medicare_cost=7_000, health_cost_growth=0.02, spouse_retirement_age=None,
     )
     flows = {f.name: f for f in healthcare_flows(plan, current_age=55, retirement_age=60)}
     assert (flows["Health insurance before Medicare"].start_age, flows["Health insurance before Medicare"].end_age) == (60, 64)
@@ -89,6 +89,51 @@ def test_healthcare_flows_by_person():
     assert flows["Medicare premiums & out-of-pocket (spouse)"].end_age == 97
     assert all(f.category == "healthcare" and f.real_growth == 0.02 for f in flows.values())
     assert flows["Medicare premiums & out-of-pocket (spouse)"].owner == "spouse"
+
+    plan.spouse_retirement_age = 62  # spouse's age; you are 64 then
+    flows = {f.name: f for f in healthcare_flows(plan, current_age=55, retirement_age=60)}
+    spouse_pre = flows["Health insurance before Medicare (spouse)"]
+    assert (spouse_pre.start_age, spouse_pre.end_age) == (64, 66)
+
+
+def test_spouses_retire_at_different_ages():
+    inp = couple(
+        current_age=55, retirement_age=58, life_expectancy=90, spouse_current_age=50, spouse_retirement_age=60,
+        spouse_life_expectancy=90, expected_return=0.07, retirement_return=0.04, cash=0,
+        contrib_tax_deferred=10_000, spouse_contrib_tax_free=5_000,
+    )
+    assert inp.spouse_retirement_in_your_age == 65
+    assert (inp.first_retirement_age, inp.last_retirement_age) == (58, 65)
+    rows = {r.age: r for r in simulate(inp)}
+    assert rows[57].contributions == 15_000 and not rows[57].retired
+    assert rows[58].contributions == 5_000 and not rows[58].retired  # you retired; spouse still saving
+    assert rows[64].contributions == 5_000
+    assert rows[65].contributions == 0 and rows[65].retired
+    assert rows[57].investment_return == 0.07 and rows[58].investment_return == 0.04
+
+
+def test_cash_flow_owners_follow_their_person(client):
+    year = date.today().year
+    plan = client.post("/api/plans", json={
+        "name": "Two careers", "birth_year": year - 55, "retirement_age": 60, "life_expectancy": 70,
+        "spouse_birth_year": year - 50, "spouse_retirement_age": 62, "spouse_life_expectancy": 95,
+        "pre_medicare_cost": 0, "medicare_cost": 0,
+    }).json()
+    for cf in [
+        {"name": "My salary", "kind": "income", "amount": 100_000, "ends_at_retirement": True, "owner": "self"},
+        {"name": "Spouse salary", "kind": "income", "amount": 80_000, "ends_at_retirement": True, "owner": "spouse"},
+        {"name": "Spouse pension", "kind": "income", "amount": 20_000, "start_age": 65, "owner": "spouse",
+         "tax_type": "ordinary"},
+        {"name": "Living", "kind": "expense", "amount": 90_000},
+    ]:
+        assert client.post(f"/api/plans/{plan['id']}/cash-flows", json=cf).status_code == 201
+    rows = {r["age"]: r for r in client.get(f"/api/plans/{plan['id']}/projection?simulations=0").json()["years"]}
+    assert rows[59]["income"] == pytest.approx(180_000 * 1.025 ** 4)
+    assert rows[60]["income"] == pytest.approx(80_000 * 1.025 ** 5)  # spouse works until their 62 = your 67
+    assert rows[66]["income"] == pytest.approx(80_000 * 1.025 ** 11)
+    assert rows[67]["income"] == 0
+    assert rows[70]["income"] == pytest.approx(20_000 * 1.025 ** 15)  # spouse's 65
+    assert rows[100]["spouse_age"] == 95 and rows[100]["income"] > 0  # pension continues for the survivor
 
 
 def test_retirement_age_explorer(client):

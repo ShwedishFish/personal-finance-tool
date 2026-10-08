@@ -45,6 +45,7 @@ class Account(Base):
     monthly_payment: Mapped[float] = mapped_column(Float, default=0.0)
     annual_contribution: Mapped[float] = mapped_column(Float, default=0.0)
     cost_basis: Mapped[float | None] = mapped_column(Float, nullable=True)
+    owner: Mapped[str] = mapped_column(String, default="self")  # contributions stop when the owner retires
     archived: Mapped[bool] = mapped_column(Boolean, default=False)
     plaid_account_id: Mapped[str | None] = mapped_column(String, unique=True, nullable=True)
     plaid_item_id: Mapped[int | None] = mapped_column(
@@ -122,6 +123,7 @@ class Plan(Base):
     spouse_ss_monthly_benefit: Mapped[float] = mapped_column(Float, default=0.0)
     spouse_ss_claim_age: Mapped[int] = mapped_column(Integer, default=67)
     spouse_life_expectancy: Mapped[int] = mapped_column(Integer, default=95)
+    spouse_retirement_age: Mapped[int | None] = mapped_column(Integer, nullable=True)  # None = same year as you
     survivor_spending: Mapped[float] = mapped_column(Float, default=0.75)
     pre_medicare_cost: Mapped[float] = mapped_column(Float, default=12_000)  # per person per year
     medicare_cost: Mapped[float] = mapped_column(Float, default=7_000)  # per person per year, before IRMAA
@@ -155,6 +157,9 @@ class CashFlow(Base):
     tax_type: Mapped[str] = mapped_column(String, default="wages")
     category: Mapped[str] = mapped_column(String, default="general")
     every_n_years: Mapped[int] = mapped_column(Integer, default=1)
+    # "self" | "spouse": ages and "at retirement" follow that person, and the item stops at their death.
+    # "joint": ages and retirement follow you; continues for the survivor.
+    owner: Mapped[str] = mapped_column(String, default="joint")
 
     plan: Mapped[Plan] = relationship(back_populates="cash_flows")
 

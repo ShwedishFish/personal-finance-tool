@@ -13,6 +13,8 @@ CashFlowKind = Literal["income", "expense", "goal"]
 TaxType = Literal["wages", "ordinary", "social_security", "tax_free"]
 TaxMode = Literal["progressive", "flat"]
 FilingStatus = Literal["single", "married_joint"]
+FlowOwner = Literal["self", "spouse", "joint"]
+AccountOwner = Literal["self", "spouse"]
 
 
 def _check_bracket(rate: float) -> float:
@@ -37,6 +39,7 @@ class AccountBase(BaseModel):
     monthly_payment: float = Field(0.0, ge=0)
     annual_contribution: float = Field(0.0, ge=0)
     cost_basis: float | None = Field(None, ge=0)
+    owner: AccountOwner = "self"
 
 
 class AccountCreate(AccountBase):
@@ -53,6 +56,7 @@ class AccountUpdate(BaseModel):
     monthly_payment: float | None = Field(None, ge=0)
     annual_contribution: float | None = Field(None, ge=0)
     cost_basis: float | None = Field(None, ge=0)
+    owner: AccountOwner | None = None
     archived: bool | None = None
 
 
@@ -102,6 +106,7 @@ class PlanBase(BaseModel):
     spouse_ss_monthly_benefit: float = Field(0.0, ge=0, le=20_000)
     spouse_ss_claim_age: int = Field(67, ge=62, le=70)
     spouse_life_expectancy: int = Field(95, ge=30, le=120)
+    spouse_retirement_age: int | None = Field(None, ge=18, le=100)
     survivor_spending: float = Field(0.75, ge=0.2, le=1)
     pre_medicare_cost: float = Field(12_000, ge=0, le=200_000)
     medicare_cost: float = Field(7_000, ge=0, le=200_000)
@@ -136,6 +141,7 @@ class PlanUpdate(BaseModel):
     spouse_ss_monthly_benefit: float | None = Field(None, ge=0, le=20_000)
     spouse_ss_claim_age: int | None = Field(None, ge=62, le=70)
     spouse_life_expectancy: int | None = Field(None, ge=30, le=120)
+    spouse_retirement_age: int | None = Field(None, ge=18, le=100)
     survivor_spending: float | None = Field(None, ge=0.2, le=1)
     pre_medicare_cost: float | None = Field(None, ge=0, le=200_000)
     medicare_cost: float | None = Field(None, ge=0, le=200_000)
@@ -157,6 +163,7 @@ class CashFlowBase(BaseModel):
     tax_type: TaxType = "wages"
     category: ExpenseCategory = "general"
     every_n_years: int = Field(1, ge=1, le=50)
+    owner: FlowOwner = "joint"
 
 
 class CashFlowCreate(CashFlowBase):
@@ -175,6 +182,7 @@ class CashFlowUpdate(BaseModel):
     tax_type: TaxType | None = None
     category: ExpenseCategory | None = None
     every_n_years: int | None = Field(None, ge=1, le=50)
+    owner: FlowOwner | None = None
 
 
 class CashFlowOut(CashFlowBase):

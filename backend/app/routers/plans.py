@@ -231,7 +231,7 @@ def roth_conversion_comparison(
     current_age = inp.current_age
     return {
         "window": [
-            plan.roth_start_age if plan.roth_start_age is not None else max(plan.retirement_age, current_age),
+            plan.roth_start_age if plan.roth_start_age is not None else max(inp.last_retirement_age, current_age),
             plan.roth_end_age if plan.roth_end_age is not None else rmd_start_age(plan.birth_year) - 1,
         ],
         "tax_deferred_balance": inp.tax_deferred,

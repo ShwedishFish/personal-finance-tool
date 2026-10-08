@@ -32,6 +32,43 @@ def test_csv_import_creates_accounts_and_reports_errors(client):
     assert lines[0] == "date,account,kind,tax_treatment,balance" and len(lines) == 5
 
 
+def test_backup_round_trip(client):
+    year = date.today().year
+    acct = client.post("/api/accounts", json={"name": "Brokerage", "kind": "brokerage", "balance": 1000,
+                                              "as_of": "2026-01-01", "cost_basis": 600, "owner": "spouse"}).json()
+    client.post(f"/api/accounts/{acct['id']}/balances", json={"balance": 1200, "as_of": "2026-02-01"})
+    plan = client.post("/api/plans", json={"name": "P", "birth_year": year - 40, "spouse_birth_year": year - 38,
+                                           "spouse_retirement_age": 60}).json()
+    client.post(f"/api/plans/{plan['id']}/cash-flows",
+                json={"name": "Spouse salary", "kind": "income", "amount": 90_000, "owner": "spouse",
+                      "ends_at_retirement": True})
+    client.post(f"/api/plans/{plan['id']}/children", json={"name": "Ava", "birth_year": year - 2})
+    before = client.get(f"/api/plans/{plan['id']}/projection?simulations=0").json()
+
+    resp = client.get("/api/backup")
+    assert resp.headers["content-disposition"].startswith("attachment")
+    backup = resp.json()
+    assert backup["format"] == "personal-finance-tool-backup" and len(backup["accounts"]) == 1
+
+    assert client.post("/api/restore", json={"backup": backup}).status_code == 400  # needs replace=true
+    client.post("/api/accounts", json={"name": "Stray", "kind": "cash"})
+    assert client.post("/api/restore", json={"backup": backup, "replace": True}).json() == {"accounts": 1, "plans": 1}
+
+    accounts = client.get("/api/accounts").json()
+    assert [a["name"] for a in accounts] == ["Brokerage"]
+    assert accounts[0]["cost_basis"] == 600 and accounts[0]["owner"] == "spouse"
+    assert len(client.get(f"/api/accounts/{accounts[0]['id']}/balances").json()) == 2
+    restored = client.get("/api/plans").json()[0]
+    assert restored["spouse_retirement_age"] == 60
+    assert restored["cash_flows"][0]["owner"] == "spouse" and restored["children"][0]["name"] == "Ava"
+    after = client.get(f"/api/plans/{restored['id']}/projection?simulations=0").json()
+    assert after["years"] == before["years"]
+
+    bad = dict(backup, format="something-else")
+    assert client.post("/api/restore", json={"backup": bad, "replace": True}).status_code == 400
+    assert len(client.get("/api/accounts").json()) == 1
+
+
 def test_csv_import_requires_columns(client):
     resp = client.post("/api/import/balances", json={"csv": "when,amount\n2026-01-01,5\n"})
     assert resp.status_code == 400

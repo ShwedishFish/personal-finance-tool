@@ -89,19 +89,29 @@ def social_security_flows(plan: Plan, current_age: int, claim_age: int | None = 
     return flows
 
 
-def healthcare_flows(plan: Plan, current_age: int, retirement_age: int) -> list[FlowInput]:
-    """Per-person health costs from retirement: private insurance until Medicare, then Medicare-era costs.
+def spouse_offset(plan: Plan) -> int:
+    """Add to a spouse's age to get your age in the same year."""
+    return plan.spouse_birth_year - plan.birth_year if plan.spouse_birth_year else 0
 
-    Before retirement, coverage is assumed to come through work and be part of regular spending.
+
+def spouse_retirement_in_your_age(plan: Plan, retirement_age: int) -> int:
+    if not plan.spouse_birth_year or plan.spouse_retirement_age is None:
+        return retirement_age
+    return plan.spouse_retirement_age + spouse_offset(plan)
+
+
+def healthcare_flows(plan: Plan, current_age: int, retirement_age: int) -> list[FlowInput]:
+    """Per-person health costs from each person's retirement: private insurance until Medicare, then
+    Medicare-era costs. While working, coverage is assumed to come through work and regular spending.
     """
-    people = [("", "self", 0)]
+    people = [("", "self", 0, retirement_age)]
     if plan.spouse_birth_year:
-        people.append((" (spouse)", "spouse", plan.spouse_birth_year - plan.birth_year))
+        people.append((" (spouse)", "spouse", spouse_offset(plan), spouse_retirement_in_your_age(plan, retirement_age)))
     end = plan_end_age(plan)
     flows = []
-    for suffix, owner, offset in people:
-        medicare_start = MEDICARE_AGE + offset  # in the owner's age
-        pre_start = max(retirement_age, current_age)
+    for suffix, owner, offset, retires in people:
+        medicare_start = MEDICARE_AGE + offset  # in your age
+        pre_start = max(retires, current_age)
         if plan.pre_medicare_cost > 0 and pre_start < medicare_start:
             flows.append(
                 FlowInput(f"Health insurance before Medicare{suffix}", "expense", plan.pre_medicare_cost,
@@ -154,6 +164,7 @@ def build_projection_input(
         withdrawal_rate=plan.withdrawal_rate,
         spouse_current_age=today.year - plan.spouse_birth_year if plan.spouse_birth_year else None,
         spouse_life_expectancy=plan.spouse_life_expectancy if plan.spouse_birth_year else None,
+        spouse_retirement_age=plan.spouse_retirement_age if plan.spouse_birth_year else None,
         survivor_spending=plan.survivor_spending,
         roth_conversion_rate=plan.roth_conversion_rate if roth_rate is _PLAN else roth_rate,
         roth_start_age=plan.roth_start_age,
@@ -162,6 +173,10 @@ def build_projection_input(
     if inp.roth_conversion_rate is not None and plan.tax_mode == "flat":
         warnings.append("Roth conversions need the bracket tax model; they are skipped with a flat rate.")
     taxable_basis = 0.0
+    has_spouse = bool(plan.spouse_birth_year)
+    spouse_retires = spouse_retirement_in_your_age(plan, retirement_age)
+    if has_spouse and plan.spouse_retirement_age is not None and spouse_retires < current_age:
+        warnings.append("Your spouse's retirement age is in the past; the plan treats them as already retired.")
 
     for acct in accounts:
         balance = acct.latest_balance
@@ -171,29 +186,45 @@ def build_projection_input(
                 warnings.append(f"'{acct.name}' has no monthly payment set, so its balance only grows.")
             inp.debts.append(DebtInput(acct.name, debt, acct.interest_rate, acct.monthly_payment))
             continue
+        prefix = "spouse_contrib_" if acct.owner == "spouse" and has_spouse else "contrib_"
         if acct.kind == "cash":
             inp.cash += balance
-            inp.contrib_taxable += acct.annual_contribution
+            bucket = "taxable"
         elif acct.kind in OTHER_ASSET_KINDS or acct.tax_treatment == "none":
             inp.other_assets += balance
+            continue
         elif acct.tax_treatment == "tax_deferred":
             inp.tax_deferred += balance
-            inp.contrib_tax_deferred += acct.annual_contribution
+            bucket = "tax_deferred"
         elif acct.tax_treatment == "tax_free":
             inp.tax_free += balance
-            inp.contrib_tax_free += acct.annual_contribution
+            bucket = "tax_free"
         else:
             inp.taxable += balance
             taxable_basis += balance if acct.cost_basis is None else acct.cost_basis
-            inp.contrib_taxable += acct.annual_contribution
+            bucket = "taxable"
+        setattr(inp, prefix + bucket, getattr(inp, prefix + bucket) + acct.annual_contribution)
     inp.taxable_basis = taxable_basis
 
+    offset = spouse_offset(plan)
     for cf in plan.cash_flows:
-        start = retirement_age if cf.starts_at_retirement else (cf.start_age if cf.start_age is not None else current_age)
+        owner = cf.owner if cf.owner in ("self", "spouse") else ""
+        if owner == "spouse" and not has_spouse:
+            warnings.append(f"'{cf.name}' belongs to your spouse, but no spouse is set; it is treated as joint.")
+            owner = ""
+        # Spouse items are entered in the spouse's age; the engine works in yours.
+        shift = offset if owner == "spouse" else 0
+        retires = spouse_retires if owner == "spouse" else retirement_age
+        if cf.starts_at_retirement:
+            start = retires
+        elif cf.start_age is not None:
+            start = cf.start_age + shift
+        else:
+            start = current_age
         if cf.ends_at_retirement:
-            end = retirement_age - 1
+            end = retires - 1
         elif cf.end_age is not None:
-            end = cf.end_age
+            end = cf.end_age + shift
         elif cf.kind == "goal":
             end = start
         else:
@@ -203,7 +234,8 @@ def build_projection_input(
             continue
         inp.flows.append(
             FlowInput(
-                cf.name, cf.kind, cf.amount, start, end, cf.real_growth, cf.tax_type, cf.category, cf.every_n_years
+                cf.name, cf.kind, cf.amount, start, end, cf.real_growth, cf.tax_type, cf.category, cf.every_n_years,
+                owner=owner,
             )
         )
 
@@ -225,6 +257,6 @@ def build_projection_input(
         )
     inp.flows.extend(ss_flows)
 
-    if not any(f.kind == "expense" and not f.owner and f.category not in ("kids", "education") for f in inp.flows):
+    if not any(cf.kind == "expense" and cf.category not in ("kids", "education") for cf in plan.cash_flows):
         warnings.append("No living expenses are entered, so the plan cannot compute a FI number.")
     return inp, warnings

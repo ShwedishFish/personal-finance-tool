@@ -75,6 +75,7 @@ class ProjectionInput:
     withdrawal_rate: float = 0.04
     spouse_current_age: int | None = None
     spouse_life_expectancy: int | None = None  # in the spouse's age; None = outlives the plan
+    spouse_retirement_age: int | None = None  # in the spouse's age; None = the same year as you
     survivor_spending: float = 1.0  # share of household spending that continues after the first death
     cash: float = 0.0
     taxable: float = 0.0
@@ -85,9 +86,12 @@ class ProjectionInput:
     roth_conversion_rate: float | None = None  # fill this federal bracket with conversions each year
     roth_start_age: int | None = None  # default: retirement age
     roth_end_age: int | None = None  # default: the year before RMDs start
-    contrib_taxable: float = 0.0
+    contrib_taxable: float = 0.0  # yearly contributions while you work
     contrib_tax_deferred: float = 0.0
     contrib_tax_free: float = 0.0
+    spouse_contrib_taxable: float = 0.0  # yearly contributions while your spouse works
+    spouse_contrib_tax_deferred: float = 0.0
+    spouse_contrib_tax_free: float = 0.0
     debts: list[DebtInput] = field(default_factory=list)
     flows: list[FlowInput] = field(default_factory=list)
 
@@ -100,11 +104,32 @@ class ProjectionInput:
         return self.spouse_current_age is not None
 
     @property
+    def spouse_age_offset(self) -> int:
+        """Your age minus your spouse's age."""
+        return self.current_age - self.spouse_current_age if self.has_spouse else 0
+
+    @property
+    def spouse_retirement_in_your_age(self) -> int:
+        if not self.has_spouse or self.spouse_retirement_age is None:
+            return self.retirement_age
+        return self.spouse_retirement_age + self.spouse_age_offset
+
+    @property
+    def first_retirement_age(self) -> int:
+        """In your age: when the first of you retires (the portfolio shifts to the retirement return)."""
+        return min(self.retirement_age, self.spouse_retirement_in_your_age)
+
+    @property
+    def last_retirement_age(self) -> int:
+        """In your age: when the household is fully retired."""
+        return max(self.retirement_age, self.spouse_retirement_in_your_age)
+
+    @property
     def end_age(self) -> int:
         """Last year of the plan, in your age: the later of the two life expectancies."""
         end = self.life_expectancy
         if self.has_spouse and self.spouse_life_expectancy is not None:
-            end = max(end, self.spouse_life_expectancy + self.current_age - self.spouse_current_age)
+            end = max(end, self.spouse_life_expectancy + self.spouse_age_offset)
         return end
 
     @property
@@ -164,20 +189,34 @@ def _years(inp: ProjectionInput) -> range:
 
 
 def _mean_return(inp: ProjectionInput, age: int) -> float:
-    return inp.retirement_return if age >= inp.retirement_age else inp.expected_return
+    return inp.retirement_return if age >= inp.first_retirement_age else inp.expected_return
 
 
 def _gross_up(need: float, cap: float, tax_at) -> float:
-    """Smallest withdrawal g (<= cap) with g - (tax_at(g) - tax_at(0)) >= need, by fixed-point iteration."""
+    """Smallest withdrawal g (<= cap) with g - (tax_at(g) - tax_at(0)) >= need.
+
+    Tax is piecewise linear in g, so secant steps land on the answer in a few evaluations.
+    """
     base = tax_at(0.0)
-    gross = need
-    for _ in range(40):
-        nxt = need + tax_at(min(gross, cap)) - base
-        if abs(nxt - gross) < 0.001:
-            gross = nxt
+
+    def short(g: float) -> float:
+        return need - (g - (tax_at(g) - base))
+
+    g0, s0 = need, short(need)
+    if s0 <= 0.001:
+        return min(need, cap)
+    g1 = need + s0
+    for _ in range(30):
+        s1 = short(g1)
+        if abs(s1) < 0.001:
             break
-        gross = nxt
-    return min(gross, cap)
+        slope = (s0 - s1) / (g1 - g0) if g1 != g0 else 0.0
+        g0, s0 = g1, s1
+        # A flat or backwards slope means a kink was crossed; fall back to a fixed-point step.
+        g1 = g1 + s1 / slope if slope > 1e-6 else g1 + s1
+        if g1 >= cap and short(cap) >= 0:
+            return cap
+    return min(g1, cap)
 
 
 def after_tax_value(row: YearRow) -> float:
@@ -197,7 +236,8 @@ def simulate(inp: ProjectionInput, returns: list[float] | None = None) -> list[Y
     single_profile = replace(joint_profile, filing_status="single")
     birth_year = inp.birth_year
     spouse_birth_year = inp.start_year - inp.spouse_current_age if inp.has_spouse else None
-    roth_start = inp.roth_start_age if inp.roth_start_age is not None else inp.retirement_age
+    roth_start = inp.roth_start_age if inp.roth_start_age is not None else inp.last_retirement_age
+    spouse_retires = inp.spouse_retirement_in_your_age
     roth_end = inp.roth_end_age if inp.roth_end_age is not None else rmd_start_age(birth_year) - 1
     convert = inp.roth_conversion_rate is not None and inp.tax_mode == "progressive"
     magi_history: list[float] = []
@@ -205,7 +245,7 @@ def simulate(inp: ProjectionInput, returns: list[float] | None = None) -> list[Y
 
     for t, age in enumerate(_years(inp)):
         infl = (1 + inp.inflation) ** t
-        retired = age >= inp.retirement_age
+        retired = age >= inp.last_retirement_age
         r = returns[t] if returns is not None else _mean_return(inp, age)
         r = max(r, -0.95)
 
@@ -250,9 +290,11 @@ def simulate(inp: ProjectionInput, returns: list[float] | None = None) -> list[Y
         else:
             income_by_type["social_security"] += sum(own_benefit.values())
 
-        c_deferred = 0.0 if retired else inp.contrib_tax_deferred * infl
-        c_free = 0.0 if retired else inp.contrib_tax_free * infl
-        c_taxable = 0.0 if retired else inp.contrib_taxable * infl
+        you_work = self_alive and age < inp.retirement_age
+        spouse_works = bool(spouse_alive) and age < spouse_retires
+        c_deferred = (inp.contrib_tax_deferred * you_work + inp.spouse_contrib_tax_deferred * spouse_works) * infl
+        c_free = (inp.contrib_tax_free * you_work + inp.spouse_contrib_tax_free * spouse_works) * infl
+        c_taxable = (inp.contrib_taxable * you_work + inp.spouse_contrib_taxable * spouse_works) * infl
 
         debt_payments = 0.0
         for d in debts:
@@ -415,11 +457,12 @@ def fi_number(inp: ProjectionInput) -> float:
     """Investable assets (today's dollars) needed to cover first-year retirement spending at the withdrawal rate."""
     if inp.withdrawal_rate <= 0:
         return 0.0
-    t = max(inp.retirement_age - inp.current_age, 0)
+    retire = inp.last_retirement_age
+    t = max(retire - inp.current_age, 0)
     spending = sum(
         f.amount * (1 + f.real_growth) ** t / max(f.every_n_years, 1)
         for f in inp.flows
-        if f.kind == "expense" and f.start_age <= inp.retirement_age <= f.end_age
+        if f.kind == "expense" and f.start_age <= retire <= f.end_age
     )
     return spending / inp.withdrawal_rate
 

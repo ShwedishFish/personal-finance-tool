@@ -12,6 +12,8 @@ Your data lives in a SQLite file on your own machine.
   balances, investment holdings (with cost basis), and loan/credit-card rates automatically.
 - **CSV import/export** — import balance history from a spreadsheet (`date, account, balance`,
   optionally `kind, tax_treatment`); new account names are created. Export everything the same way.
+- **Backup & restore** — download every account, balance, and plan as one JSON file, and restore
+  it on another computer (Plaid links aren't included; reconnect after restoring).
 - **Lifetime plan** — enter income and one-time goals by age (salary until retirement, a pension,
   a house down payment at 38…). The plan projects every year to your life expectancy using your
   real account balances.
@@ -32,8 +34,11 @@ Your data lives in a SQLite file on your own machine.
   (and your spouse's); benefits are adjusted for claiming age 62–70. A lower-earning spouse gets
   the spousal benefit (up to half the partner's) when larger. **Compare claiming ages** reruns the
   whole plan for each age to find the one that best supports your plan.
-- **Couples and survivors** — the plan runs until the second death. After the first, the survivor
-  keeps the larger Social Security benefit, files as single, and spending drops to a share you set.
+- **Couples and survivors** — each spouse has their own retirement age. Income and spending items
+  belong to you, your spouse, or the household: a spouse's items use the spouse's ages and
+  retirement, and personal items stop at that person's death. Account contributions stop when the
+  account owner retires. The plan runs until the second death; after the first, the survivor keeps
+  the larger Social Security benefit, files as single, and spending drops to a share you set.
 - **Healthcare in retirement** — per-person costs for private insurance from retirement until
   Medicare at 65, then Medicare-era costs, rising faster than inflation. Medicare IRMAA
   surcharges are added automatically from your income two years earlier.
@@ -86,7 +91,8 @@ treat that file as sensitive.
 - Kids' stage costs default to rough US averages; edit them to match your situation.
 - Simplifications for couples: accounts are pooled; after a death, RMDs use the survivor's age;
   the survivor benefit is the deceased's benefit as claimed (no reduction for the survivor
-  claiming early); income items you enter (salary, pensions) continue as entered.
+  claiming early); joint items continue for the survivor. Investment returns switch to the
+  retirement return when the first of you retires.
 - Monte Carlo draws yearly returns from a normal distribution (mean = your expected return,
   std. dev. = volatility). It is a planning aid, not a prediction.
 
@@ -103,9 +109,8 @@ tests/
 
 ## Roadmap ideas
 
-State tax brackets, ACA premium subsidies before Medicare, separate retirement ages for each
-spouse, historical-returns backtesting, transaction-based budgeting, and encrypting the local
-database.
+State tax brackets, ACA premium subsidies before Medicare, historical-returns backtesting,
+transaction-based budgeting, and encrypting the local database.
 
 ## License
 

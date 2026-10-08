@@ -62,6 +62,19 @@
         <p class="muted" id="plaid-status"></p>
         <div class="table-wrap"><table id="plaid-items"></table></div>
       </div>
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Backup &amp; restore</h2>
+          <div class="actions">
+            <a class="button" href="/api/backup">Download backup</a>
+            <button id="restore" class="danger">Restore from backup…</button>
+            <input type="file" id="restore-file" accept=".json,application/json" hidden />
+          </div>
+        </div>
+        <p class="muted">Your data lives only in this app's local database. A backup is one JSON file with every
+          account, balance, and plan: keep copies somewhere safe, or restore it on another computer. Restoring
+          replaces everything here. Bank links are not included; reconnect institutions after restoring elsewhere.</p>
+      </div>
     </section>
 
     <section id="tab-plan" class="tab">

@@ -258,7 +258,8 @@ const accountFields = (isNew) => [
   ...(isNew ? [{ name: "balance", label: "Current balance", type: "number", help: "Debts: enter the amount owed" }] : []),
   { name: "interest_rate", label: "Interest rate / APR", type: "percent", default: 0, help: "For debts" },
   { name: "monthly_payment", label: "Monthly payment", type: "number", default: 0, help: "For debts" },
-  { name: "annual_contribution", label: "Yearly contribution", type: "number", default: 0, help: "Planned yearly savings into this account until retirement" },
+  { name: "annual_contribution", label: "Yearly contribution", type: "number", default: 0, help: "Planned yearly savings into this account until its owner retires" },
+  { name: "owner", label: "Owner", type: "select", options: { self: "You", spouse: "Spouse" }, help: "Contributions stop when this person retires" },
   { name: "cost_basis", label: "Cost basis", type: "number", help: "Taxable brokerage: what you paid in total. Blank = no gains" },
 ];
 
@@ -335,6 +336,25 @@ async function accountAction(act, acct) {
 }
 
 $("#show-archived").addEventListener("change", guard(loadAccounts));
+
+$("#restore").addEventListener("click", () => $("#restore-file").click());
+$("#restore-file").addEventListener("change", guard(async (e) => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  let backup;
+  try {
+    backup = JSON.parse(await file.text());
+  } catch {
+    throw new Error("That file is not valid JSON.");
+  }
+  const counts = `${backup.accounts?.length ?? 0} account(s) and ${backup.plans?.length ?? 0} plan(s)`;
+  const when = backup.exported_at ? ` from ${backup.exported_at.replace("T", " ")}` : "";
+  if (!confirm(`Replace ALL accounts and plans here with the backup${when} (${counts})? This cannot be undone.`)) return;
+  const r = await api("/api/restore", { method: "POST", body: { backup, replace: true } });
+  toast(`Restored ${r.accounts} account(s) and ${r.plans} plan(s)`);
+  await Promise.all([loadAccounts(), loadPlans()]);
+}));
 
 $("#import-csv").addEventListener("click", () => $("#csv-file").click());
 $("#csv-file").addEventListener("change", guard(async (e) => {
@@ -443,6 +463,10 @@ const planFields = [
   { name: "cash_return", label: "Cash interest", type: "percent", default: 0.03 },
   { name: "withdrawal_rate", label: "Safe withdrawal rate", type: "percent", default: 0.04, help: "Used for the FI number" },
   { name: "filing_status", label: "Filing status", type: "select", options: FILING_LABELS },
+  { name: "spouse_birth_year", label: "Spouse birth year", type: "number", step: 1, help: "Blank if planning alone" },
+  { name: "spouse_retirement_age", label: "Spouse retires at age", type: "number", step: 1, help: "Spouse's age. Blank = same year as you" },
+  { name: "spouse_life_expectancy", label: "Plan until spouse's age", type: "number", step: 1, default: 95, help: "The plan runs until the second death" },
+  { name: "survivor_spending", label: "Spending after one spouse dies", type: "percent", default: 0.75, help: "Share of household spending that continues (kids and education excluded)" },
   { name: "tax_mode", label: "Tax model", type: "select", options: TAX_MODE_LABELS },
   { name: "state_tax_rate", label: "State income tax", type: "percent", default: 0, help: "Flat rate on taxable income" },
   { name: "effective_tax_rate", label: "Flat tax rate", type: "percent", default: 0.15, help: "Only used by the flat model" },
@@ -493,11 +517,8 @@ const childFields = [
 const ssFields = [
   { name: "ss_monthly_benefit", label: "Your monthly benefit at full retirement age", type: "number", default: 0, full: true, help: "From your statement at ssa.gov/myaccount, today's dollars" },
   { name: "ss_claim_age", label: "You claim at age", type: "number", step: 1, default: 67, help: "62–70" },
-  { name: "spouse_birth_year", label: "Spouse birth year", type: "number", step: 1, help: "Optional" },
   { name: "spouse_ss_monthly_benefit", label: "Spouse's monthly benefit at FRA", type: "number", default: 0, help: "0 if no work history: a spousal benefit (up to half of yours) still applies" },
-  { name: "spouse_ss_claim_age", label: "Spouse claims at age", type: "number", step: 1, default: 67 },
-  { name: "spouse_life_expectancy", label: "Plan until spouse's age", type: "number", step: 1, default: 95, help: "The plan runs until the second death" },
-  { name: "survivor_spending", label: "Spending after one spouse dies", type: "percent", default: 0.75, help: "Share of household spending that continues (kids and education excluded)" },
+  { name: "spouse_ss_claim_age", label: "Spouse claims at age", type: "number", step: 1, default: 67, help: "Set your spouse's birth year under Assumptions" },
 ];
 
 const healthFields = [
@@ -535,6 +556,8 @@ async function loadPlans() {
 }
 
 const currentPlan = () => state.plans.find((p) => p.id === state.planId);
+const spouseRetirementAge = (plan) =>
+  plan.spouse_retirement_age ?? plan.retirement_age - (plan.spouse_birth_year - plan.birth_year);
 const planEndAge = (plan) =>
   plan.spouse_birth_year
     ? Math.max(plan.life_expectancy, plan.spouse_life_expectancy + plan.spouse_birth_year - plan.birth_year)
@@ -553,14 +576,19 @@ async function renderPlan() {
   renderHealth(plan, proj);
   renderSpendingChart(proj.years);
   const years = proj.years;
-  const atRetirement = years.find((y) => y.age === plan.retirement_age) ?? years[0];
+  const lastRetirement = plan.spouse_birth_year
+    ? Math.max(plan.retirement_age, spouseRetirementAge(plan) + plan.spouse_birth_year - plan.birth_year)
+    : plan.retirement_age;
+  const atRetirement = years.find((y) => y.age === lastRetirement) ?? years[0];
   const rate = proj.monte_carlo?.success_rate ?? 0;
 
   $("#plan-cards").innerHTML = [
     card("Chance of success", pct(rate, 0), `${proj.monte_carlo.simulations} Monte Carlo runs`, scoreClass(rate)),
     card("FI number", money(proj.fi_number), `${pct(plan.withdrawal_rate)} of retirement spending`),
     card("FI age", proj.fi_age ?? "Not reached", "Expected path"),
-    card(`At retirement (${plan.retirement_age})`, money(atRetirement?.investable_real), "Investable, today's dollars"),
+    card(
+      lastRetirement === plan.retirement_age ? `At retirement (${lastRetirement})` : `Both retired (your ${lastRetirement})`,
+      money(atRetirement?.investable_real), "Investable, today's dollars"),
     card("Money lasts", proj.depletion_age ? `Until ${proj.depletion_age}` : `Past ${proj.end_age}`, "Expected path, your age", proj.depletion_age ? "bad" : "good"),
     card("Lifetime taxes", money(proj.lifetime_taxes_real), "Today's dollars, expected path"),
     card("Left at end, after tax", money(proj.after_tax_ending_real), "Net of taxes heirs would owe, today's dollars"),
@@ -616,11 +644,18 @@ async function renderPlan() {
       </tr>`).join("")}`;
 }
 
+const OWNER_LABELS = { joint: "Joint / household", self: "You", spouse: "Spouse" };
+
 function openFlowForm(kind, values = {}) {
   const editing = values.id != null;
+  const [nameField, ...rest] = FLOW_FORMS[kind];
+  const ownerField = {
+    name: "owner", label: "Whose", type: "select", options: OWNER_LABELS, default: kind === "income" ? "self" : "joint",
+    help: "Ages and “at retirement” follow this person; personal items stop at their death",
+  };
   openForm({
     title: editing ? `Edit ${values.name}` : `Add ${FLOW_LABELS[kind].toLowerCase()}`,
-    fields: FLOW_FORMS[kind],
+    fields: currentPlan().spouse_birth_year ? [nameField, ownerField, ...rest] : FLOW_FORMS[kind],
     values,
     onSubmit: async (v) => {
       if (editing) await api(`/api/cash-flows/${values.id}`, { method: "PATCH", body: v });
@@ -650,27 +685,35 @@ function bindFlowTable(table, plan) {
 }
 
 function renderCashFlows(plan) {
-  const ret = plan.retirement_age;
   const currentAge = new Date().getFullYear() - plan.birth_year;
-  const startAge = (cf) => (cf.starts_at_retirement ? ret : cf.start_age ?? currentAge);
+  const offset = plan.spouse_birth_year ? plan.spouse_birth_year - plan.birth_year : 0;
+  const isSpouse = (cf) => plan.spouse_birth_year && cf.owner === "spouse";
+  // Ages below are in the item owner's age; `shift` converts spouse ages to yours.
+  const shift = (cf) => (isSpouse(cf) ? offset : 0);
+  const ret = (cf) => (isSpouse(cf) ? spouseRetirementAge(plan) : plan.retirement_age);
+  const startAge = (cf) => (cf.starts_at_retirement ? ret(cf) : cf.start_age ?? currentAge - shift(cf)) + shift(cf);
   const endAge = (cf) => {
-    if (cf.ends_at_retirement) return ret - 1;
-    if (cf.end_age != null) return cf.end_age;
+    if (cf.ends_at_retirement) return ret(cf) - 1 + shift(cf);
+    if (cf.end_age != null) return cf.end_age + shift(cf);
     return cf.kind === "goal" ? startAge(cf) : planEndAge(plan);
   };
-  const startText = (cf) => (cf.starts_at_retirement ? `Retirement (${ret})` : cf.start_age ?? "Now");
+  const startText = (cf) => (cf.starts_at_retirement ? `Retirement (${ret(cf)})` : cf.start_age ?? "Now");
   const endText = (cf) => {
-    if (cf.ends_at_retirement) return `Retirement (${ret - 1})`;
+    if (cf.ends_at_retirement) return `Retirement (${ret(cf) - 1})`;
     if (cf.end_age != null) return cf.end_age;
     return cf.kind === "goal" ? "One-time" : "End of plan";
   };
+  const ownerTag = (cf) =>
+    plan.spouse_birth_year && cf.owner !== "joint"
+      ? ` <span class="tag" title="Ages are ${cf.owner === "spouse" ? "your spouse's" : "yours"}">${cf.owner === "spouse" ? "Spouse" : "You"}</span>`
+      : "";
 
   const incomeTable = $("#income-table");
   const incomes = plan.cash_flows.filter((cf) => cf.kind !== "expense");
   incomeTable.innerHTML = incomes.length
     ? `<tr><th>Name</th><th>Type</th><th class="num">Amount</th><th>Starts</th><th>Ends</th><th class="num">Real growth</th><th></th></tr>` +
       incomes.map((cf) => `
-        <tr><td>${esc(cf.name)}</td>
+        <tr><td>${esc(cf.name)}${ownerTag(cf)}</td>
           <td><span class="tag">${cf.kind === "goal" ? "Goal" : shortLabel(TAX_TYPE_LABELS[cf.tax_type])}</span></td>
           <td class="num">${money(cf.amount)}</td><td>${startText(cf)}</td><td>${endText(cf)}</td>
           <td class="num">${cf.real_growth ? pct(cf.real_growth) : "—"}</td>${flowActions(cf)}</tr>`).join("")
@@ -686,7 +729,7 @@ function renderCashFlows(plan) {
   spendTable.innerHTML = expenses.length
     ? `<tr><th>Name</th><th>Category</th><th class="num">Amount</th><th>How often</th><th>Starts</th><th>Ends</th><th class="num">Real growth</th><th></th></tr>` +
       expenses.map((cf) => `
-        <tr><td>${esc(cf.name)}</td><td><span class="tag">${shortLabel(CATEGORY_LABELS[cf.category])}</span></td>
+        <tr><td>${esc(cf.name)}${ownerTag(cf)}</td><td><span class="tag">${shortLabel(CATEGORY_LABELS[cf.category])}</span></td>
           <td class="num">${money(cf.amount)}</td>
           <td>${cf.every_n_years > 1 ? `Every ${cf.every_n_years} yrs` : "Yearly"}</td>
           <td>${startText(cf)}</td><td>${endText(cf)}</td>

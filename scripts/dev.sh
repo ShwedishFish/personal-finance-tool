@@ -13,10 +13,15 @@ if [ ! -x .venv/bin/python ]; then
   fi
 fi
 
-if command -v uv >/dev/null 2>&1; then
-  uv pip install --quiet --python .venv/bin/python -r requirements-dev.txt
-else
-  .venv/bin/python -m pip install --quiet -r requirements-dev.txt
+# Reinstall only when the requirements change; fall back to pip if uv is missing or broken.
+stamp=.venv/.installed-requirements
+want="$(cat requirements.txt requirements-dev.txt)"
+if [ ! -f "$stamp" ] || [ "$(cat "$stamp")" != "$want" ]; then
+  if ! { command -v uv >/dev/null 2>&1 && uv pip install --quiet --python .venv/bin/python -r requirements-dev.txt; }; then
+    .venv/bin/python -m ensurepip --upgrade >/dev/null 2>&1 || true
+    .venv/bin/python -m pip install --quiet -r requirements-dev.txt
+  fi
+  printf '%s' "$want" > "$stamp"
 fi
 
-exec .venv/bin/python -m uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port "$PORT" --reload
+exec .venv/bin/python -m uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port "$PORT" --reload --reload-dir backend
