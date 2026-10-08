@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .models import Account, BalanceSnapshot, Holding, PlaidItem
+from .transactions import apply_plaid_transactions
 
 TAX_FREE_SUBTYPES = {"roth", "roth 401k", "roth 403b", "tfsa", "hsa", "529", "cash isa", "isa"}
 TAX_DEFERRED_SUBTYPES = {
@@ -27,6 +28,7 @@ class Gateway(Protocol):
     def get_accounts(self, access_token: str) -> list[dict]: ...
     def get_holdings(self, access_token: str) -> dict | None: ...
     def get_liabilities(self, access_token: str) -> dict | None: ...
+    def sync_transactions(self, access_token: str, cursor: str | None) -> dict | None: ...
 
 
 def classify(plaid_type: str | None, subtype: str | None) -> tuple[str, str]:
@@ -152,6 +154,16 @@ def sync_item(session: Session, item: PlaidItem, gateway: Gateway, today: date |
     if liabilities:
         _apply_liabilities(by_plaid_id, liabilities)
 
+    transactions = 0
+    changes = gateway.sync_transactions(item.access_token, item.transactions_cursor)
+    if changes:
+        session.flush()
+        transactions = apply_plaid_transactions(session, by_plaid_id, changes)
+        item.transactions_cursor = changes.get("next_cursor") or item.transactions_cursor
+
     item.last_synced_at = datetime.now()
     session.commit()
-    return {"accounts_created": created, "accounts_updated": updated, "holdings": holdings_count}
+    return {
+        "accounts_created": created, "accounts_updated": updated, "holdings": holdings_count,
+        "transactions": transactions,
+    }

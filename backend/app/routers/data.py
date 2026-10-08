@@ -10,7 +10,19 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..db import get_session
-from ..models import ACCOUNT_KINDS, Account, BalanceSnapshot, CashFlow, Child, Holding, Home, PlaidItem, Plan
+from ..models import (
+    ACCOUNT_KINDS,
+    Account,
+    BalanceSnapshot,
+    CashFlow,
+    CategoryRule,
+    Child,
+    Holding,
+    Home,
+    PlaidItem,
+    Plan,
+    Transaction,
+)
 from ..schemas import AccountBase, CashFlowCreate, ChildCreate, HomeCreate, PlanCreate
 from .accounts import upsert_balance
 
@@ -143,12 +155,32 @@ class BackupPlan(PlanCreate):
     homes: list[HomeCreate] = []
 
 
+class BackupTransaction(BaseModel):
+    account_id: int | None = None  # id at export time
+    external_id: str | None = None
+    posted_on: date
+    description: str
+    merchant: str | None = None
+    amount: float
+    category: str = "other"
+    category_source: str = "auto"
+    plaid_category: str | None = None
+    pending: bool = False
+
+
+class BackupRule(BaseModel):
+    match: str
+    category: str
+
+
 class Backup(BaseModel):
     format: str
     version: int
     exported_at: datetime | None = None
     accounts: list[BackupAccount] = []
     plans: list[BackupPlan] = []
+    transactions: list[BackupTransaction] = []
+    category_rules: list[BackupRule] = []
 
 
 class RestoreRequest(BaseModel):
@@ -179,7 +211,14 @@ def export_backup(session: Session = Depends(get_session)):
     ]
     stamp = datetime.now().replace(microsecond=0)
     body = Backup(format=BACKUP_FORMAT, version=BACKUP_VERSION, exported_at=stamp).model_dump(mode="json")
-    body.update(accounts=accounts, plans=plans)
+    transactions = [
+        BackupTransaction.model_validate(t, from_attributes=True).model_dump(mode="json")
+        for t in session.scalars(select(Transaction).order_by(Transaction.posted_on, Transaction.id))
+    ]
+    rules = [
+        BackupRule.model_validate(r, from_attributes=True).model_dump() for r in session.scalars(select(CategoryRule))
+    ]
+    body.update(accounts=accounts, plans=plans, transactions=transactions, category_rules=rules)
     return Response(
         json.dumps(body, indent=2),
         media_type="application/json",
@@ -198,12 +237,14 @@ def restore_backup(body: RestoreRequest, session: Session = Depends(get_session)
     if not body.replace:
         raise HTTPException(400, "Restoring replaces all accounts and plans; confirm with replace=true.")
 
-    for model in (Account, Plan):
+    for model in (Transaction, CategoryRule, Account, Plan):
         for obj in session.scalars(select(model)):
             session.delete(obj)
     session.flush()
 
     items = {i.item_id: i for i in session.scalars(select(PlaidItem))}
+    for item in items.values():
+        item.transactions_cursor = None  # refetch transaction history the backup may be missing
     new_ids: dict[int, Account] = {}
     for a in backup.accounts:
         fields = a.model_dump(exclude={"id", "balances", "holdings", "plaid_item_id"})
@@ -232,5 +273,9 @@ def restore_backup(body: RestoreRequest, session: Session = Depends(get_session)
             for h in p.homes
         ]
         session.add(plan)
+    session.add_all(
+        Transaction(**{**t.model_dump(), "account_id": relink(t.account_id)}) for t in backup.transactions
+    )
+    session.add_all(CategoryRule(**r.model_dump()) for r in backup.category_rules)
     session.commit()
-    return {"accounts": len(backup.accounts), "plans": len(backup.plans)}
+    return {"accounts": len(backup.accounts), "plans": len(backup.plans), "transactions": len(backup.transactions)}

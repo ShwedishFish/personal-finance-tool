@@ -9,10 +9,15 @@ Your data lives in a SQLite file on your own machine.
 - **Accounts & net worth** — cash, brokerage, retirement (taxable / tax-deferred / tax-free),
   property, and debts. Record balances over time and see net worth history and asset allocation.
 - **Bank sync (optional)** — link institutions through [Plaid](https://plaid.com/) to pull
-  balances, investment holdings (with cost basis), and loan/credit-card rates automatically.
+  balances, transactions, investment holdings (with cost basis), and loan/credit-card rates automatically.
 - **CSV import/export** — import balance history from a spreadsheet (`date, account, balance`,
   optionally `kind, tax_treatment`); new account names are created. Export everything the same way.
-- **Backup & restore** — download every account, balance, and plan as one JSON file, and restore
+- **Actual vs. planned spending** — transactions from Plaid, or a bank's CSV export (`date,
+  description, amount`, optionally `account, category`), are categorized and averaged over complete
+  months, then shown per year beside this year of your plan. Recategorize a transaction and the app
+  can remember it for that merchant. Transfers, debt payments, income, and taxes are left out
+  because the plan models them separately. Re-importing a file skips rows already imported.
+- **Backup & restore** — download every account, balance, plan, and transaction as one JSON file, and restore
   it on another computer (Plaid links aren't included; reconnect after restoring).
 - **Lifetime plan** — enter income and one-time goals by age (salary until retirement, a pension,
   a house down payment at 38…). The plan projects every year to your life expectancy using your
@@ -131,14 +136,15 @@ backend/app/
   finance/      pure calculation code (projection, Monte Carlo, debt, net worth)
   routers/      FastAPI endpoints
   plaid_*.py    Plaid client wrapper and account sync
+  transactions.py  transaction categorizing, CSV import, and actual-vs-plan summary
 frontend/       static HTML/JS/CSS (no build step)
 tests/
 ```
 
 ## Roadmap ideas
 
-State tax brackets, ACA premium subsidies before Medicare, historical-returns backtesting,
-transaction-based budgeting, and encrypting the local database.
+Budgets and alerts from transactions, local tax-lot tracking, and more state-specific rules
+(local income taxes, state estate taxes).
 
 ## Contributing
 

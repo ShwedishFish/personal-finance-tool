@@ -172,6 +172,7 @@ const loaders = {
   dashboard: loadDashboard,
   accounts: loadAccounts,
   plan: loadPlans,
+  spending: loadSpending,
   compare: loadCompare,
   debt: loadDebt,
 };
@@ -1207,6 +1208,168 @@ $("#plan-delete").addEventListener("click", guard(async () => {
 
 $("#income-add").addEventListener("click", () => openFlowForm("income", { tax_type: "wages", ends_at_retirement: true }));
 $("#goal-add").addEventListener("click", () => openFlowForm("goal"));
+
+// ---------- spending ----------
+
+const EXCLUDED_LABELS = {
+  income: "Income", transfer: "Transfer between accounts", debt_payment: "Debt payment", taxes: "Taxes", ignore: "Ignore",
+};
+const TXN_CATEGORY_LABELS = {
+  ...Object.fromEntries(Object.entries(CATEGORY_LABELS).filter(([c]) => c !== "general")),
+  ...EXCLUDED_LABELS,
+};
+
+async function loadSpending() {
+  const plans = await api("/api/plans");
+  const pick = $("#spend-plan");
+  const chosen = pick.value || state.planId || plans[0]?.id || "";
+  pick.innerHTML = `<option value="">No plan</option>` +
+    plans.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join("");
+  pick.value = String(chosen);
+  const filter = $("#txn-category");
+  if (!filter.options.length) {
+    filter.innerHTML = `<option value="">All categories</option>` +
+      Object.entries(TXN_CATEGORY_LABELS).map(([k, v]) => `<option value="${k}">${esc(shortLabel(v))}</option>`).join("");
+  }
+  await Promise.all([renderSpendingSummary(), renderTransactions()]);
+}
+
+async function renderSpendingSummary() {
+  const planId = $("#spend-plan").value;
+  const s = await api(`/api/spending/summary?months=${$("#spend-months").value}${planId ? `&plan_id=${planId}` : ""}`);
+  const hasPlan = s.planned_annual != null;
+  if (!s.transaction_count) {
+    $("#spend-cards").innerHTML = "";
+    $("#spend-table").innerHTML = `<tr><td class="muted">No transactions in this period. Link a bank on the Accounts tab
+      and sync, or import a CSV export from your bank.</td></tr>`;
+    $("#spend-note").textContent = "";
+    drawChart("spend-chart", { type: "bar", data: { datasets: [] } });
+    return;
+  }
+  const diff = hasPlan ? s.actual_annual - s.planned_annual : null;
+  const period = s.partial ? `${s.start} to ${s.end} (this month so far)` : `${s.start} to ${s.end}`;
+  $("#spend-cards").innerHTML = [
+    card("Actual spending", `${money(s.actual_annual)}/yr`, `${money(s.actual_annual / 12)}/mo · ${period}`),
+    hasPlan ? card("Plan this year", `${money(s.planned_annual)}/yr`, "Spending items, kids, healthcare, home costs") : "",
+    hasPlan ? card(diff > 0 ? "Over plan" : "Under plan", `${money(Math.abs(diff))}/yr`,
+      `${pct(Math.abs(diff) / (s.planned_annual || 1), 0)} ${diff > 0 ? "more" : "less"} than planned`,
+      diff > 0.05 * s.planned_annual ? "bad" : "good") : "",
+    card("Transactions", s.transaction_count.toLocaleString(), `${+s.months.toFixed(1)} month(s) of data`),
+  ].join("");
+
+  const rows = [...s.categories].sort((a, b) => b.actual_annual - a.actual_annual || (b.planned_annual ?? 0) - (a.planned_annual ?? 0));
+  $("#spend-table").innerHTML =
+    `<tr><th>Category</th><th class="num">Actual per year</th>${hasPlan ? `<th class="num">Plan per year</th><th class="num">Difference</th>` : ""}</tr>` +
+    rows.map((c) => {
+      const d = hasPlan ? c.actual_annual - c.planned_annual : 0;
+      return `<tr><td>${esc(shortLabel(CATEGORY_LABELS[c.category] ?? c.category))}</td>
+        <td class="num">${c.actual_annual ? money(c.actual_annual) : "—"}</td>
+        ${hasPlan ? `<td class="num">${c.planned_annual ? money(c.planned_annual) : "—"}</td>
+          <td class="num ${d > 0 ? "bad" : "good"}">${d > 0 ? "+" : d < 0 ? "−" : ""}${money(Math.abs(d))}</td>` : ""}</tr>`;
+    }).join("") +
+    `<tr><th>Total</th><th class="num">${money(s.actual_annual)}</th>${hasPlan
+      ? `<th class="num">${money(s.planned_annual)}</th><th class="num ${diff > 0 ? "bad" : "good"}">${diff > 0 ? "+" : "−"}${money(Math.abs(diff))}</th>` : ""}</tr>`;
+
+  const excluded = Object.entries(s.excluded).map(([c, v]) => `${EXCLUDED_LABELS[c]} ${money(Math.abs(v))}`);
+  const general = s.categories.some((c) => c.category === "general");
+  $("#spend-note").textContent = [
+    general ? "Your plan uses one General spending item, so compare the totals rather than each category." : "",
+    excluded.length ? `Left out over this period: ${excluded.join(", ")}.` : "",
+    s.top_merchants.length ? `Biggest merchants: ${s.top_merchants.slice(0, 5).map((m) => `${m.name} ${money(m.total)}`).join(", ")}.` : "",
+  ].filter(Boolean).join(" ");
+
+  const cats = Object.keys(CATEGORY_LABELS).filter((c) => s.monthly.some((m) => m.by_category[c]));
+  drawChart("spend-chart", {
+    type: "bar",
+    data: {
+      labels: s.monthly.map((m) => m.month),
+      datasets: [
+        ...cats.map((c) => ({
+          label: shortLabel(CATEGORY_LABELS[c]),
+          data: s.monthly.map((m) => m.by_category[c] || 0),
+          backgroundColor: PALETTE[Object.keys(CATEGORY_LABELS).indexOf(c) % PALETTE.length],
+          stack: "spend",
+        })),
+        ...(hasPlan ? [{
+          type: "line", label: "Plan per month", data: s.monthly.map(() => s.planned_annual / 12),
+          borderColor: "#111", borderDash: [6, 4], pointRadius: 0, borderWidth: 1.5,
+        }] : []),
+      ],
+    },
+    options: moneyChartOptions({ scales: { x: { stacked: true }, y: { stacked: true, ticks: { callback: (v) => compact(v) } } } }),
+  });
+}
+
+async function renderTransactions() {
+  const params = new URLSearchParams({ limit: "300" });
+  if ($("#txn-category").value) params.set("category", $("#txn-category").value);
+  if ($("#txn-search").value.trim()) params.set("q", $("#txn-search").value.trim());
+  const [txns, rules] = await Promise.all([api(`/api/transactions?${params}`), api("/api/spending/rules")]);
+  const options = Object.entries(TXN_CATEGORY_LABELS).map(([k, v]) => `<option value="${k}">${esc(shortLabel(v))}</option>`).join("");
+  const table = $("#txn-table");
+  table.innerHTML = txns.length
+    ? `<tr><th>Date</th><th>Description</th><th>Account</th><th class="num">Amount</th><th>Category</th></tr>` +
+      txns.map((t) => `<tr>
+        <td>${t.date}${t.pending ? ` <span class="muted">pending</span>` : ""}</td>
+        <td>${esc(t.merchant || t.description)}${t.merchant && t.merchant !== t.description ? `<br><span class="muted">${esc(t.description)}</span>` : ""}</td>
+        <td>${esc(t.account ?? "—")}</td>
+        <td class="num ${t.amount < 0 ? "good" : ""}">${t.amount < 0 ? "+" : ""}${money(Math.abs(t.amount))}</td>
+        <td><select data-id="${t.id}">${options}</select></td></tr>`).join("") +
+      (txns.length >= 300 ? `<tr><td colspan="5" class="muted">Showing the latest 300. Search or filter to find others.</td></tr>` : "")
+    : `<tr><td class="muted">No transactions match.</td></tr>`;
+  table.querySelectorAll("select").forEach((sel, i) => {
+    sel.value = txns[i].category;
+    sel.onchange = guard(async () => {
+      const r = await api(`/api/transactions/${sel.dataset.id}`, {
+        method: "PATCH", body: { category: sel.value, remember: $("#txn-remember").checked },
+      });
+      if (r.updated > 1) toast(`Updated ${r.updated} transactions from this merchant`);
+      await Promise.all([renderSpendingSummary(), r.updated > 1 ? renderTransactions() : null]);
+    });
+  });
+
+  const list = $("#rules-list");
+  list.innerHTML = rules.length
+    ? `Merchant rules: ` + rules.map((r) =>
+        `<span class="tag">${esc(r.match)} → ${esc(shortLabel(TXN_CATEGORY_LABELS[r.category] ?? r.category))}
+          <button class="link" data-rule="${r.id}" title="Forget this rule">×</button></span>`).join(" ")
+    : "";
+  list.querySelectorAll("[data-rule]").forEach((b) => (b.onclick = guard(async () => {
+    await api(`/api/spending/rules/${b.dataset.rule}`, { method: "DELETE" });
+    await renderTransactions();
+  })));
+}
+
+$("#spend-plan").addEventListener("change", guard(renderSpendingSummary));
+$("#spend-months").addEventListener("change", guard(renderSpendingSummary));
+$("#txn-category").addEventListener("change", guard(renderTransactions));
+let searchTimer;
+$("#txn-search").addEventListener("input", () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(guard(renderTransactions), 250);
+});
+$("#spend-import").addEventListener("click", () => $("#spend-file").click());
+$("#spend-file").addEventListener("change", guard(async (e) => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  const negative = confirm("Are purchases negative numbers in this file (most bank exports)?\n\nOK = purchases are negative\nCancel = purchases are positive");
+  const r = await api("/api/import/transactions", { method: "POST", body: { csv: await file.text(), negative_is_spending: negative } });
+  const box = $("#spend-import-result");
+  box.hidden = false;
+  box.innerHTML = `Imported ${r.imported} transaction(s)` +
+    (r.duplicates ? `; skipped ${r.duplicates} already imported` : "") +
+    (r.errors.length
+      ? `. <span class="bad">${r.errors.length} row(s) skipped:</span><br>` +
+        r.errors.slice(0, 10).map((err) => `Line ${err.line}: ${esc(err.message)}`).join("<br>")
+      : ".");
+  await loadSpending();
+}));
+$("#txn-clear").addEventListener("click", guard(async () => {
+  if (!confirm("Delete all transactions imported from CSV files? Bank-synced transactions are kept.")) return;
+  await api("/api/transactions/imported", { method: "DELETE" });
+  await loadSpending();
+}));
 
 // ---------- compare ----------
 

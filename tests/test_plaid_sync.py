@@ -30,6 +30,9 @@ class FakeGateway:
         return {"credit": [{"account_id": "cc", "aprs": [{"apr_type": "purchase_apr", "apr_percentage": 22.0}],
                             "minimum_payment_amount": 35.0}]}
 
+    def sync_transactions(self, access_token, cursor):
+        return None
+
 
 @pytest.mark.parametrize(
     "plaid_type, subtype, expected",
@@ -54,7 +57,7 @@ def test_sync_creates_and_updates_accounts(session_factory):
         session.commit()
 
         result = sync_item(session, item, FakeGateway(), today=date(2026, 1, 1))
-        assert result == {"accounts_created": 3, "accounts_updated": 0, "holdings": 1}
+        assert result == {"accounts_created": 3, "accounts_updated": 0, "holdings": 1, "transactions": 0}
         accounts = {a.plaid_account_id: a for a in item.accounts}
         assert accounts["chk"].name == "Checking ••0000"
         assert accounts["roth"].tax_treatment == "tax_free"

@@ -52,7 +52,8 @@ def test_backup_round_trip(client):
 
     assert client.post("/api/restore", json={"backup": backup}).status_code == 400  # needs replace=true
     client.post("/api/accounts", json={"name": "Stray", "kind": "cash"})
-    assert client.post("/api/restore", json={"backup": backup, "replace": True}).json() == {"accounts": 1, "plans": 1}
+    restored = client.post("/api/restore", json={"backup": backup, "replace": True}).json()
+    assert restored == {"accounts": 1, "plans": 1, "transactions": 0}
 
     accounts = client.get("/api/accounts").json()
     assert [a["name"] for a in accounts] == ["Brokerage"]

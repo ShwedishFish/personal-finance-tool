@@ -13,6 +13,7 @@ from plaid.model.liabilities_get_request import LiabilitiesGetRequest
 from plaid.model.link_token_create_request import LinkTokenCreateRequest
 from plaid.model.link_token_create_request_user import LinkTokenCreateRequestUser
 from plaid.model.products import Products
+from plaid.model.transactions_sync_request import TransactionsSyncRequest
 
 from .config import Settings
 
@@ -101,6 +102,30 @@ class PlaidGateway:
             if err.code in SKIPPABLE_ERRORS:
                 return None
             raise err from exc
+
+    def sync_transactions(self, access_token: str, cursor: str | None) -> dict | None:
+        """All changes since cursor as {added, modified, removed, next_cursor}, or None if unavailable."""
+        for attempt in range(3):
+            out: dict = {"added": [], "modified": [], "removed": [], "next_cursor": cursor}
+            try:
+                while True:
+                    kwargs = {"cursor": out["next_cursor"]} if out["next_cursor"] else {}
+                    page = self._client.transactions_sync(
+                        TransactionsSyncRequest(access_token=access_token, count=500, **kwargs)
+                    ).to_dict()
+                    for key in ("added", "modified", "removed"):
+                        out[key].extend(page.get(key) or [])
+                    out["next_cursor"] = page["next_cursor"]
+                    if not page.get("has_more"):
+                        return out
+            except plaid.ApiException as exc:
+                err = _wrap(exc)
+                if err.code == "TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION" and attempt < 2:
+                    continue  # Plaid asks to restart from the original cursor
+                if err.code in SKIPPABLE_ERRORS:
+                    return None
+                raise err from exc
+        return None
 
     def remove_item(self, access_token: str) -> None:
         try:

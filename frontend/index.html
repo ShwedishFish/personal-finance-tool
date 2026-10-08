@@ -14,6 +14,7 @@
       <button data-tab="dashboard" class="active">Dashboard</button>
       <button data-tab="accounts">Accounts</button>
       <button data-tab="plan">Plan</button>
+      <button data-tab="spending">Spending</button>
       <button data-tab="compare">Compare</button>
       <button data-tab="debt">Debt</button>
     </nav>
@@ -72,7 +73,7 @@
           </div>
         </div>
         <p class="muted">Your data lives only in this app's local database. A backup is one JSON file with every
-          account, balance, and plan: keep copies somewhere safe, or restore it on another computer. Restoring
+          account, balance, plan, and transaction: keep copies somewhere safe, or restore it on another computer. Restoring
           replaces everything here. Bank links are not included; reconnect institutions after restoring elsewhere.</p>
       </div>
     </section>
@@ -221,6 +222,51 @@
         <div id="compare-pick" class="pick"></div>
         <div class="table-wrap"><table id="compare-table"></table></div>
         <div class="chart-box tall"><canvas id="compare-chart"></canvas></div>
+      </div>
+    </section>
+
+    <section id="tab-spending" class="tab">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Actual vs. planned spending</h2>
+          <div class="actions">
+            <label class="inline">Plan <select id="spend-plan"></select></label>
+            <label class="inline">Last
+              <select id="spend-months">
+                <option value="3">3 months</option>
+                <option value="6">6 months</option>
+                <option value="12" selected>12 months</option>
+                <option value="24">24 months</option>
+              </select>
+            </label>
+            <button id="spend-import" title="Columns: date, description, amount, and optionally account, category">Import CSV</button>
+            <input type="file" id="spend-file" accept=".csv,text/csv" hidden />
+          </div>
+        </div>
+        <p class="muted">Transactions from linked banks (Plaid) or CSV exports, averaged over complete months and
+          shown per year in today's dollars beside this year of your plan. Transfers, debt payments, income, and
+          taxes are left out because the plan models them separately.</p>
+        <div id="spend-import-result" class="muted" hidden></div>
+        <div class="cards" id="spend-cards"></div>
+        <div class="table-wrap"><table id="spend-table"></table></div>
+        <p class="muted" id="spend-note"></p>
+      </div>
+      <div class="panel">
+        <h2>Spending by month</h2>
+        <div class="chart-box"><canvas id="spend-chart"></canvas></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Transactions</h2>
+          <div class="actions">
+            <input type="search" id="txn-search" placeholder="Search" />
+            <select id="txn-category"></select>
+            <label class="inline"><input type="checkbox" id="txn-remember" checked /> Apply category changes to the whole merchant</label>
+            <button id="txn-clear" class="danger">Delete imported</button>
+          </div>
+        </div>
+        <div class="table-wrap"><table id="txn-table"></table></div>
+        <p class="muted" id="rules-list"></p>
       </div>
     </section>
 

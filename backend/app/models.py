@@ -29,6 +29,7 @@ class PlaidItem(Base):
     institution_name: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    transactions_cursor: Mapped[str | None] = mapped_column(String, nullable=True)
 
     accounts: Mapped[list["Account"]] = relationship(back_populates="plaid_item")
 
@@ -232,3 +233,35 @@ class Child(Base):
     college_years: Mapped[int] = mapped_column(Integer, default=4)
 
     plan: Mapped[Plan] = relationship(back_populates="children")
+
+
+class Transaction(Base):
+    """A bank or card transaction from Plaid or a CSV import. Positive amounts are money out."""
+
+    __tablename__ = "transactions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    account_id: Mapped[int | None] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), nullable=True)
+    # Plaid's transaction_id, or "csv:<hash>" so re-importing a file does not duplicate rows.
+    external_id: Mapped[str | None] = mapped_column(String, unique=True, nullable=True)
+    posted_on: Mapped[date] = mapped_column(Date, index=True)
+    description: Mapped[str] = mapped_column(String)
+    merchant: Mapped[str | None] = mapped_column(String, nullable=True)
+    amount: Mapped[float] = mapped_column(Float)
+    category: Mapped[str] = mapped_column(String, default="other")
+    category_source: Mapped[str] = mapped_column(String, default="auto")  # "auto" | "rule" | "user"
+    plaid_category: Mapped[str | None] = mapped_column(String, nullable=True)
+    pending: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+    account: Mapped[Account | None] = relationship()
+
+
+class CategoryRule(Base):
+    """Recategorize every transaction from a merchant, now and on future syncs and imports."""
+
+    __tablename__ = "category_rules"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    match: Mapped[str] = mapped_column(String, unique=True)  # normalized merchant or description
+    category: Mapped[str] = mapped_column(String)
