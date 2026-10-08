@@ -16,7 +16,11 @@ def active_accounts(session: Session) -> list[Account]:
     return list(session.scalars(select(Account).where(Account.archived.is_(False)).order_by(Account.name)))
 
 
-CHILD_STAGES = (("ages 0–5", 0, 5, "cost_early"), ("ages 6–12", 6, 12, "cost_middle"), ("ages 13–17", 13, 17, "cost_teen"))
+CHILD_STAGES = (
+    ("ages 0–5", 0, 5, "cost_early"),
+    ("ages 6–12", 6, 12, "cost_middle"),
+    ("ages 13–17", 13, 17, "cost_teen"),
+)
 
 
 def child_flows(child: Child, parent_birth_year: int) -> list[FlowInput]:
@@ -26,7 +30,9 @@ def child_flows(child: Child, parent_birth_year: int) -> list[FlowInput]:
     for label, lo, hi, attr in CHILD_STAGES:
         cost = getattr(child, attr)
         if cost > 0:
-            flows.append(FlowInput(f"{child.name}: {label}", "expense", cost, offset + lo, offset + hi, category="kids"))
+            flows.append(
+                FlowInput(f"{child.name}: {label}", "expense", cost, offset + lo, offset + hi, category="kids")
+            )
     if child.college_cost > 0 and child.college_years > 0:
         start = offset + child.college_start_age
         flows.append(

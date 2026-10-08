@@ -112,6 +112,10 @@ tests/
 State tax brackets, ACA premium subsidies before Medicare, historical-returns backtesting,
 transaction-based budgeting, and encrypting the local database.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). CI runs tests and lint on every push and pull request.
+
 ## License
 
 To be decided.

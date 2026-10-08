@@ -57,7 +57,7 @@ class TaxBreakdown:
 def bracket_tax(taxable_income: float, filing_status: str, scale: float = 1.0) -> float:
     tax = 0.0
     lower = 0.0
-    for rate, top in zip(BRACKET_RATES, BRACKET_TOPS[filing_status] + (float("inf"),)):
+    for rate, top in zip(BRACKET_RATES, BRACKET_TOPS[filing_status] + (float("inf"),), strict=True):
         upper = top * scale
         if taxable_income <= lower:
             break
@@ -69,7 +69,7 @@ def bracket_tax(taxable_income: float, filing_status: str, scale: float = 1.0) -
 def bracket_ceiling(rate: float, filing_status: str, scale: float = 1.0) -> float:
     """Top of the taxable-income range taxed at `rate` (e.g. 0.22)."""
     tops = BRACKET_TOPS[filing_status]
-    for r, top in zip(BRACKET_RATES, tops):
+    for r, top in zip(BRACKET_RATES, tops, strict=False):  # the top bracket has no ceiling
         if abs(r - rate) < 1e-9:
             return top * scale
     raise ValueError(f"No {rate:.0%} bracket")

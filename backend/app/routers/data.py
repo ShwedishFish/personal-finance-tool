@@ -57,7 +57,7 @@ def import_balances(body: BalanceImport, session: Session = Depends(get_session)
     accounts = {a.name.strip().lower(): a for a in session.scalars(select(Account))}
     imported, created, errors = 0, [], []
     for line, row in enumerate(reader, start=2):
-        def cell(column: str) -> str:
+        def cell(column: str, row: dict = row) -> str:
             return (row.get(headers[column]) or "").strip() if column in headers else ""
 
         name = cell("account")

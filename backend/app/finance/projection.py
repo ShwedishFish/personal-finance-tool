@@ -251,7 +251,9 @@ def simulate(inp: ProjectionInput, returns: list[float] | None = None) -> list[Y
 
         spouse_age = inp.spouse_current_age + t if inp.has_spouse else None
         self_alive = age <= inp.life_expectancy
-        spouse_alive = inp.has_spouse and (inp.spouse_life_expectancy is None or spouse_age <= inp.spouse_life_expectancy)
+        spouse_alive = inp.has_spouse and (
+            inp.spouse_life_expectancy is None or spouse_age <= inp.spouse_life_expectancy
+        )
         widowed = inp.has_spouse and not (self_alive and spouse_alive)
         alive = {"": True, "self": self_alive, "spouse": spouse_alive}
         profile = single_profile if widowed else joint_profile
@@ -496,7 +498,7 @@ def monte_carlo(inp: ProjectionInput, simulations: int = 1000, seed: int = 42) -
             by_year[i].append(row.investable_real)
 
     bands = []
-    for age, values in zip(ages, by_year):
+    for age, values in zip(ages, by_year, strict=True):
         values.sort()
         bands.append(
             {

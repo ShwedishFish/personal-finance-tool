@@ -4,6 +4,24 @@ version = "0.1.0"
 description = "Local-first, open source long-term personal finance planner"
 requires-python = ">=3.11"
 
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+extend-exclude = ["data"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query"]
+
+[tool.ruff.lint.per-file-ignores]
+# The per-year tax closures are only called within the iteration that defines them.
+"backend/app/finance/projection.py" = ["B023"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
 [tool.pytest.ini_options]
 pythonpath = ["backend"]
 testpaths = ["tests"]

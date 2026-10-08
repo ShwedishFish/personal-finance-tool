@@ -30,6 +30,7 @@ def test_old_database_is_upgraded():
     cols = {c["name"] for c in inspect(engine).get_columns("cash_flows")}
     assert "taxable" not in cols and {"tax_type", "category", "every_n_years"} <= cols
     with engine.connect() as conn:
-        assert conn.execute(text("SELECT tax_type FROM cash_flows ORDER BY id")).scalars().all() == ["tax_free", "wages"]
+        tax_types = conn.execute(text("SELECT tax_type FROM cash_flows ORDER BY id")).scalars().all()
+        assert tax_types == ["tax_free", "wages"]
         assert conn.execute(text("SELECT tax_mode, ss_claim_age FROM plans")).one() == ("progressive", 67)
     assert inspect(engine).has_table("children")

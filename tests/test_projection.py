@@ -120,7 +120,8 @@ def test_roth_conversions_stop_before_rmds():
 
 
 def test_recurring_expense_every_n_years():
-    inp = flat(cash=200_000, flows=[FlowInput("Car", "expense", 30_000, 40, 95, category="transportation", every_n_years=3)])
+    car = FlowInput("Car", "expense", 30_000, 40, 95, category="transportation", every_n_years=3)
+    inp = flat(cash=200_000, flows=[car])
     rows = simulate(inp)
     assert [r.expenses for r in rows] == [30_000, 0, 0, 30_000, 0, 0]
     assert rows[0].expenses_by_category_real == {"transportation": 30_000}

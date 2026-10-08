@@ -81,7 +81,8 @@ def test_healthcare_flows_by_person():
         pre_medicare_cost=12_000, medicare_cost=7_000, health_cost_growth=0.02, spouse_retirement_age=None,
     )
     flows = {f.name: f for f in healthcare_flows(plan, current_age=55, retirement_age=60)}
-    assert (flows["Health insurance before Medicare"].start_age, flows["Health insurance before Medicare"].end_age) == (60, 64)
+    mine = flows["Health insurance before Medicare"]
+    assert (mine.start_age, mine.end_age) == (60, 64)
     assert (flows["Health insurance before Medicare (spouse)"].start_age,
             flows["Health insurance before Medicare (spouse)"].end_age) == (60, 66)
     assert flows["Medicare premiums & out-of-pocket"].start_age == 65
