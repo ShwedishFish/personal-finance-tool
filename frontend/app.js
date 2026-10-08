@@ -451,15 +451,28 @@ $("#plaid-sync").addEventListener("click", guard(async () => {
 
 // ---------- plans ----------
 
+const RETURN_MODEL_LABELS = {
+  allocation: "Stocks & bonds, gliding to a retirement mix",
+  simple: "Single return before and after retirement",
+};
+
 const planFields = [
   { name: "name", label: "Plan name", required: true, full: true },
   { name: "birth_year", label: "Birth year", type: "number", step: 1, required: true, default: new Date().getFullYear() - 35 },
   { name: "retirement_age", label: "Retirement age", type: "number", step: 1, default: 65 },
   { name: "life_expectancy", label: "Plan until age", type: "number", step: 1, default: 95 },
   { name: "inflation", label: "Inflation", type: "percent", default: 0.025 },
-  { name: "expected_return", label: "Return before retirement", type: "percent", default: 0.07, help: "Average yearly, before inflation" },
-  { name: "retirement_return", label: "Return in retirement", type: "percent", default: 0.05 },
-  { name: "return_volatility", label: "Return volatility", type: "percent", default: 0.15, help: "Std. deviation used by Monte Carlo" },
+  { name: "return_model", label: "Investment returns", type: "select", options: RETURN_MODEL_LABELS, full: true },
+  { name: "stock_allocation_now", label: "Stocks today", type: "percent", default: 0.9, help: "Rest is bonds; glides to the retirement mix" },
+  { name: "stock_allocation_retired", label: "Stocks once retired", type: "percent", default: 0.6, help: "Reached when the first of you retires" },
+  { name: "stock_return", label: "Stock return", type: "percent", default: 0.085, help: "Average yearly, before inflation" },
+  { name: "bond_return", label: "Bond return", type: "percent", default: 0.045 },
+  { name: "stock_volatility", label: "Stock volatility", type: "percent", default: 0.17, help: "Std. deviation per year" },
+  { name: "bond_volatility", label: "Bond volatility", type: "percent", default: 0.06 },
+  { name: "stock_bond_correlation", label: "Stock–bond correlation", type: "number", step: 0.05, default: 0.1, help: "−1 to 1" },
+  { name: "expected_return", label: "Return before retirement", type: "percent", default: 0.07, help: "Single-return model only" },
+  { name: "retirement_return", label: "Return in retirement", type: "percent", default: 0.05, help: "Single-return model only" },
+  { name: "return_volatility", label: "Return volatility", type: "percent", default: 0.15, help: "Single-return model only" },
   { name: "cash_return", label: "Cash interest", type: "percent", default: 0.03 },
   { name: "withdrawal_rate", label: "Safe withdrawal rate", type: "percent", default: 0.04, help: "Used for the FI number" },
   { name: "filing_status", label: "Filing status", type: "select", options: FILING_LABELS },
@@ -626,7 +639,7 @@ async function renderPlan() {
   };
   $("#years-table").innerHTML = `
     <tr><th>Year</th><th>${hasSpouse ? "Ages (you / spouse)" : "Age"}</th><th class="num">Income</th><th class="num">Taxes</th><th class="num">Expenses</th>
-    <th class="num">Goals</th><th class="num">Debt pmts</th><th class="num">Saved</th><th class="num">RMD</th><th class="num">Roth conv.</th><th class="num">Net flow</th>
+    <th class="num">Goals</th><th class="num">Debt pmts</th><th class="num">Saved</th><th class="num">RMD</th><th class="num">Roth conv.</th><th class="num">Net flow</th><th class="num">Stocks</th><th class="num">Return</th>
     <th class="num">Investable</th><th class="num">Net worth</th><th class="num">Net worth (today's $)</th></tr>
     ${years.map((y) => `
       <tr class="${y.retired ? "retired" : ""}">
@@ -639,6 +652,8 @@ async function renderPlan() {
         <td class="num">${y.rmd ? money(y.rmd) : "—"}</td>
         <td class="num">${y.roth_conversion ? money(y.roth_conversion) : "—"}</td>
         <td class="num ${y.shortfall ? "bad" : y.net_cash_flow < 0 ? "warn" : ""}">${money(y.net_cash_flow)}</td>
+        <td class="num">${y.stock_allocation == null ? "—" : pct(y.stock_allocation, 0)}</td>
+        <td class="num">${pct(y.investment_return)}</td>
         <td class="num">${money(y.investable)}</td><td class="num">${money(y.net_worth)}</td>
         <td class="num">${money(y.net_worth_real)}</td>
       </tr>`).join("")}`;

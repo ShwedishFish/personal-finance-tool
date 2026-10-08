@@ -67,6 +67,16 @@ class ProjectionInput:
     expected_return: float = 0.07
     retirement_return: float = 0.05
     return_volatility: float = 0.15
+    # "simple": the two returns above. "allocation": a stock/bond mix that glides from
+    # stock_allocation_now today to stock_allocation_retired when the first of you retires.
+    return_model: str = "simple"
+    stock_return: float = 0.085
+    bond_return: float = 0.045
+    stock_volatility: float = 0.17
+    bond_volatility: float = 0.06
+    stock_bond_correlation: float = 0.1
+    stock_allocation_now: float = 0.9
+    stock_allocation_retired: float = 0.6
     cash_return: float = 0.03
     tax_mode: str = "progressive"
     filing_status: str = "single"
@@ -151,6 +161,7 @@ class YearRow:
     spouse_alive: bool | None
     filing_status: str
     retired: bool
+    stock_allocation: float | None
     investment_return: float
     income: float
     taxes: float
@@ -188,8 +199,46 @@ def _years(inp: ProjectionInput) -> range:
     return range(inp.current_age, inp.end_age + 1)
 
 
+def stock_allocation(inp: ProjectionInput, age: int) -> float | None:
+    """Share of investments in stocks at `age`, or None for the simple return model."""
+    if inp.return_model != "allocation":
+        return None
+    start, end = inp.current_age, inp.first_retirement_age
+    if age >= end or end <= start:
+        return inp.stock_allocation_retired
+    progress = (age - start) / (end - start)
+    return inp.stock_allocation_now + (inp.stock_allocation_retired - inp.stock_allocation_now) * progress
+
+
 def _mean_return(inp: ProjectionInput, age: int) -> float:
-    return inp.retirement_return if age >= inp.first_retirement_age else inp.expected_return
+    w = stock_allocation(inp, age)
+    if w is None:
+        return inp.retirement_return if age >= inp.first_retirement_age else inp.expected_return
+    return w * inp.stock_return + (1 - w) * inp.bond_return
+
+
+def portfolio_returns(inp: ProjectionInput, stocks: list[float], bonds: list[float]) -> list[float]:
+    """Yearly portfolio returns for given stock and bond return paths, using the glide path."""
+    out = []
+    for age, s, b in zip(_years(inp), stocks, bonds, strict=False):
+        w = stock_allocation(inp, age)
+        w = 1.0 if w is None else w
+        out.append(w * s + (1 - w) * b)
+    return out
+
+
+def random_returns(inp: ProjectionInput, rng: random.Random) -> list[float]:
+    """One Monte Carlo path of yearly portfolio returns."""
+    ages = list(_years(inp))
+    if inp.return_model != "allocation":
+        return [rng.gauss(_mean_return(inp, age), inp.return_volatility) for age in ages]
+    rho = max(-1.0, min(1.0, inp.stock_bond_correlation))
+    stocks, bonds = [], []
+    for _ in ages:
+        z1, z2 = rng.gauss(0, 1), rng.gauss(0, 1)
+        stocks.append(inp.stock_return + inp.stock_volatility * z1)
+        bonds.append(inp.bond_return + inp.bond_volatility * (rho * z1 + (1 - rho * rho) ** 0.5 * z2))
+    return portfolio_returns(inp, stocks, bonds)
 
 
 def _gross_up(need: float, cap: float, tax_at) -> float:
@@ -419,6 +468,7 @@ def simulate(inp: ProjectionInput, returns: list[float] | None = None) -> list[Y
                 spouse_alive=spouse_alive if inp.has_spouse else None,
                 filing_status=filing,
                 retired=retired,
+                stock_allocation=stock_allocation(inp, age),
                 investment_return=r,
                 income=income,
                 taxes=tax.total,
@@ -478,16 +528,14 @@ def _percentile(sorted_values: list[float], p: float) -> float:
     return sorted_values[lo] + (sorted_values[hi] - sorted_values[lo]) * (k - lo)
 
 
-def monte_carlo(inp: ProjectionInput, simulations: int = 1000, seed: int = 42) -> dict:
-    rng = random.Random(seed)
+def summarize_paths(inp: ProjectionInput, paths) -> dict:
+    """Run the plan once per return path; success rate, failure ages, and percentile bands."""
     ages = list(_years(inp))
-    means = [_mean_return(inp, age) for age in ages]
     by_year: list[list[float]] = [[] for _ in ages]
-    successes = 0
+    successes = runs = 0
     depletion_ages: list[int] = []
-
-    for _ in range(simulations):
-        returns = [rng.gauss(m, inp.return_volatility) for m in means]
+    for returns in paths:
+        runs += 1
         rows = simulate(inp, returns)
         failed_at = next((row.age for row in rows if row.shortfall > 0), None)
         if failed_at is None:
@@ -509,11 +557,16 @@ def monte_carlo(inp: ProjectionInput, simulations: int = 1000, seed: int = 42) -
         )
     depletion_ages.sort()
     return {
-        "simulations": simulations,
-        "success_rate": successes / simulations if simulations else 0.0,
+        "simulations": runs,
+        "success_rate": successes / runs if runs else 0.0,
         "median_depletion_age": _percentile(depletion_ages, 0.5) if depletion_ages else None,
         "bands": bands,
     }
+
+
+def monte_carlo(inp: ProjectionInput, simulations: int = 1000, seed: int = 42) -> dict:
+    rng = random.Random(seed)
+    return summarize_paths(inp, (random_returns(inp, rng) for _ in range(simulations)))
 
 
 def lifetime_taxes_real(inp: ProjectionInput, rows: list[YearRow]) -> float:

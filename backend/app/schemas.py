@@ -12,6 +12,7 @@ TaxTreatment = Literal["taxable", "tax_deferred", "tax_free", "none"]
 CashFlowKind = Literal["income", "expense", "goal"]
 TaxType = Literal["wages", "ordinary", "social_security", "tax_free"]
 TaxMode = Literal["progressive", "flat"]
+ReturnModel = Literal["allocation", "simple"]
 FilingStatus = Literal["single", "married_joint"]
 FlowOwner = Literal["self", "spouse", "joint"]
 AccountOwner = Literal["self", "spouse"]
@@ -94,6 +95,14 @@ class PlanBase(BaseModel):
     expected_return: float = Field(0.07, ge=-0.2, le=0.3)
     retirement_return: float = Field(0.05, ge=-0.2, le=0.3)
     return_volatility: float = Field(0.15, ge=0, le=1)
+    return_model: ReturnModel = "allocation"
+    stock_return: float = Field(0.085, ge=-0.2, le=0.3)
+    bond_return: float = Field(0.045, ge=-0.2, le=0.3)
+    stock_volatility: float = Field(0.17, ge=0, le=1)
+    bond_volatility: float = Field(0.06, ge=0, le=1)
+    stock_bond_correlation: float = Field(0.1, ge=-1, le=1)
+    stock_allocation_now: float = Field(0.9, ge=0, le=1)
+    stock_allocation_retired: float = Field(0.6, ge=0, le=1)
     cash_return: float = Field(0.03, ge=-0.05, le=0.2)
     tax_mode: TaxMode = "progressive"
     filing_status: FilingStatus = "single"
@@ -129,6 +138,14 @@ class PlanUpdate(BaseModel):
     expected_return: float | None = Field(None, ge=-0.2, le=0.3)
     retirement_return: float | None = Field(None, ge=-0.2, le=0.3)
     return_volatility: float | None = Field(None, ge=0, le=1)
+    return_model: ReturnModel | None = None
+    stock_return: float | None = Field(None, ge=-0.2, le=0.3)
+    bond_return: float | None = Field(None, ge=-0.2, le=0.3)
+    stock_volatility: float | None = Field(None, ge=0, le=1)
+    bond_volatility: float | None = Field(None, ge=0, le=1)
+    stock_bond_correlation: float | None = Field(None, ge=-1, le=1)
+    stock_allocation_now: float | None = Field(None, ge=0, le=1)
+    stock_allocation_retired: float | None = Field(None, ge=0, le=1)
     cash_return: float | None = Field(None, ge=-0.05, le=0.2)
     tax_mode: TaxMode | None = None
     filing_status: FilingStatus | None = None

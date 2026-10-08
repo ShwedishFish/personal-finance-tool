@@ -93,8 +93,11 @@ treat that file as sensitive.
   the survivor benefit is the deceased's benefit as claimed (no reduction for the survivor
   claiming early); joint items continue for the survivor. Investment returns switch to the
   retirement return when the first of you retires.
-- Monte Carlo draws yearly returns from a normal distribution (mean = your expected return,
-  std. dev. = volatility). It is a planning aid, not a prediction.
+- Investments follow a stock/bond mix that glides in a straight line from today's allocation to
+  your retirement allocation, reached when the first of you retires. Monte Carlo draws correlated
+  yearly stock and bond returns from normal distributions. A simpler model with one return
+  before and one after retirement is available under Assumptions. It is a planning aid, not a
+  prediction.
 
 ## Project layout
 
