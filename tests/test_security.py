@@ -94,3 +94,11 @@ def test_password_gates_the_api(client, no_sleep):
 def test_rejects_other_host_headers(client):
     assert client.get("/api/health", headers={"host": "attacker.example"}).status_code == 400
     assert client.get("/api/health", headers={"host": "127.0.0.1:8020"}).status_code == 200
+
+
+def test_pages_may_only_contact_this_app_and_plaid(client):
+    csp = client.get("/").headers["content-security-policy"]
+    assert "default-src 'self'" in csp
+    assert "script-src 'self' https://cdn.plaid.com" in csp
+    assert "cdn.jsdelivr.net" not in client.get("/").text
+    assert client.get("/vendor/chart.umd.min.js").status_code == 200

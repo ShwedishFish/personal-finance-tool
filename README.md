@@ -2,7 +2,9 @@
 
 A local-first, open source long-term financial planner, in the spirit of
 [ProjectionLab](https://projectionlab.com/) and [Boldin](https://www.boldin.com/).
-Your data lives in a SQLite file on your own machine.
+It runs entirely on your own computer: there is no account to create, no server to sign up for,
+and nothing about you is sent anywhere unless you choose to connect a bank (see
+[Privacy](#security-and-privacy)).
 
 ## Features
 
@@ -55,7 +57,18 @@ Your data lives in a SQLite file on your own machine.
 - **Scenarios** — duplicate a plan, change assumptions (retire at 55? spend more?), and compare.
 - **Debt payoff** — avalanche vs. snowball with extra monthly payments.
 
-## Quick start
+## Download and run
+
+1. Install [Python 3.11 or newer](https://www.python.org/downloads/) if you don't have it.
+2. Download the latest release (**Code → Download ZIP**, or a zip under **Releases**) and unzip it.
+3. Double-click **Start Personal Finance.command** (macOS) or **Start Personal Finance.bat**
+   (Windows). The first start takes a minute to install; then your browser opens the app at
+   <http://127.0.0.1:8020/>. Close the window to stop it.
+
+On macOS, if you see "cannot be opened because it is from an unidentified developer",
+right-click the file, choose **Open**, then **Open** again (only needed once).
+
+## Quick start for developers
 
 Requires Python 3.11+ (the script uses [uv](https://docs.astral.sh/uv/) if installed).
 
@@ -94,6 +107,17 @@ For real accounts, request Production access in the Plaid dashboard and set `PLA
 Plaid access tokens are encrypted in the local database (see below).
 
 ## Security and privacy
+
+**What leaves your computer:** nothing, unless you connect a bank. There is no analytics,
+tracking, telemetry, or cloud sync, and every script the app uses (including the chart library)
+ships in this repo. The app sets a Content Security Policy that tells the browser it may only contact the app
+itself and Plaid, so even a bug couldn't quietly send your data to another site.
+
+**If you connect a bank:** Plaid is used with *your own* Plaid keys, so the connection is between
+you, your bank, and Plaid; this project's author never sees it. You log in to your bank inside
+Plaid's window, and the app downloads balances, holdings, and transactions from Plaid to your
+computer. See [Plaid's privacy policy](https://plaid.com/legal/#end-user-privacy-policy). CSV
+import and manual entry work without any of this.
 
 - Everything stays on your computer in `data/finance.db` (gitignored, readable only by your user).
   Turn on FileVault (or your OS's disk encryption) so the database is encrypted on disk.
@@ -182,4 +206,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). CI runs tests and lint on every push and
 
 ## License
 
-To be decided.
+[MIT](LICENSE). Chart.js (`frontend/vendor/chart.umd.min.js`) is also MIT licensed.
