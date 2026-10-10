@@ -1,8 +1,10 @@
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from fastapi import Depends, FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
@@ -15,6 +17,7 @@ FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
 ALLOWED_HOSTS = ["127.0.0.1", "localhost", "testserver"] + [
     h.strip() for h in os.getenv("PFT_ALLOWED_HOSTS", "").split(",") if h.strip()
 ]
+SAFE_METHODS = ("GET", "HEAD", "OPTIONS")
 # The browser may only talk to this app, plus Plaid Link when the user connects a bank.
 CONTENT_SECURITY_POLICY = "; ".join([
     "default-src 'self' https://cdn.plaid.com",
@@ -39,9 +42,24 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title="Personal Finance Tool", lifespan=lifespan)
 
 
+def _cross_site(request: Request) -> bool:
+    """True when a browser says the request came from another site (a form or script on a web page)."""
+    fetch_site = request.headers.get("sec-fetch-site")
+    if fetch_site is not None:
+        return fetch_site not in ("same-origin", "none")
+    origin = request.headers.get("origin")
+    if origin is None:
+        return False  # not sent by a browser page, e.g. curl or the scripts in this repo
+    return origin == "null" or urlsplit(origin).hostname not in ALLOWED_HOSTS
+
+
 @app.middleware("http")
 async def privacy_headers(request: Request, call_next):
-    response = await call_next(request)
+    # Web pages can submit forms (including file uploads) to 127.0.0.1 without reading the answer; refuse them.
+    if request.method not in SAFE_METHODS and _cross_site(request):
+        response = JSONResponse({"detail": "Requests from other websites are not allowed."}, status_code=403)
+    else:
+        response = await call_next(request)
     response.headers.setdefault("Content-Security-Policy", CONTENT_SECURITY_POLICY)
     response.headers.setdefault("Referrer-Policy", "no-referrer")
     response.headers.setdefault("X-Content-Type-Options", "nosniff")

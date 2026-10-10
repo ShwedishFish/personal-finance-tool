@@ -108,3 +108,21 @@ def test_pages_may_only_contact_this_app_and_plaid(client):
 
 def test_browser_revalidates_app_files_after_an_update(client):
     assert client.get("/app.js").headers["cache-control"] == "no-cache"
+
+
+def test_other_websites_cannot_change_data(client):
+    # A page can POST to 127.0.0.1 without asking (no body, or a form); only JSON needs permission.
+    for headers in (
+        {"Sec-Fetch-Site": "cross-site"}, {"Sec-Fetch-Site": "same-site"},
+        {"Origin": "https://evil.example"}, {"Origin": "null"},
+    ):
+        assert client.post("/api/sample-data", headers=headers).status_code == 403, headers
+    assert client.get("/api/sample-data").json()["empty"] is True
+
+
+def test_the_app_itself_and_local_scripts_can_change_data(client):
+    same_origin = {"Sec-Fetch-Site": "same-origin", "Origin": "http://127.0.0.1:8020"}
+    r = client.post("/api/accounts", json={"name": "Checking", "kind": "cash"}, headers=same_origin)
+    assert r.status_code == 201
+    assert client.post("/api/accounts", json={"name": "Savings", "kind": "cash"}).status_code == 201
+    assert client.get("/api/accounts", headers={"Sec-Fetch-Site": "cross-site"}).status_code == 200
