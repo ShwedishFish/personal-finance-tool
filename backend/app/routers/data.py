@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..auth import get_setting, set_setting
 from ..db import get_session
 from ..models import (
     ACCOUNT_KINDS,
@@ -23,6 +24,7 @@ from ..models import (
     Plan,
     Transaction,
 )
+from ..sample_data import sample_backup
 from ..schemas import AccountBase, CashFlowCreate, ChildCreate, HomeCreate, PlanCreate
 from .accounts import upsert_balance
 
@@ -124,6 +126,7 @@ def export_balances(session: Session = Depends(get_session)):
 
 BACKUP_FORMAT = "personal-finance-tool-backup"
 BACKUP_VERSION = 1
+SAMPLE_SETTING = "sample_data_loaded"
 
 
 class BackupBalance(BaseModel):
@@ -236,11 +239,22 @@ def restore_backup(body: RestoreRequest, session: Session = Depends(get_session)
         raise HTTPException(400, "This backup is from a newer version of the app; update the app first.")
     if not body.replace:
         raise HTTPException(400, "Restoring replaces all accounts and plans; confirm with replace=true.")
+    counts = replace_all(session, backup)
+    set_setting(session, SAMPLE_SETTING, None)
+    session.commit()
+    return counts
 
+
+def delete_all(session: Session) -> None:
     for model in (Transaction, CategoryRule, Account, Plan):
         for obj in session.scalars(select(model)):
             session.delete(obj)
     session.flush()
+
+
+def replace_all(session: Session, backup: Backup) -> dict:
+    """Swap every account, plan, and transaction for the backup's. Plaid links on this machine are kept."""
+    delete_all(session)
 
     items = {i.item_id: i for i in session.scalars(select(PlaidItem))}
     for item in items.values():
@@ -277,5 +291,36 @@ def restore_backup(body: RestoreRequest, session: Session = Depends(get_session)
         Transaction(**{**t.model_dump(), "account_id": relink(t.account_id)}) for t in backup.transactions
     )
     session.add_all(CategoryRule(**r.model_dump()) for r in backup.category_rules)
-    session.commit()
+    session.flush()
     return {"accounts": len(backup.accounts), "plans": len(backup.plans), "transactions": len(backup.transactions)}
+
+
+def _is_empty(session: Session) -> bool:
+    return not any(session.scalars(select(model).limit(1)).first() for model in (Account, Plan, Transaction))
+
+
+@router.get("/sample-data")
+def sample_data_status(session: Session = Depends(get_session)):
+    return {"loaded": get_setting(session, SAMPLE_SETTING) is not None, "empty": _is_empty(session)}
+
+
+@router.post("/sample-data")
+def load_sample_data(session: Session = Depends(get_session)):
+    """Fill an empty app with a made-up household so it can be explored before entering real numbers."""
+    if not _is_empty(session):
+        raise HTTPException(409, "Sample data can only be loaded into an empty app.")
+    backup = Backup(format=BACKUP_FORMAT, version=BACKUP_VERSION, **sample_backup())
+    counts = replace_all(session, backup)
+    set_setting(session, SAMPLE_SETTING, "1")
+    session.commit()
+    return counts
+
+
+@router.delete("/sample-data", status_code=204)
+def clear_sample_data(session: Session = Depends(get_session)):
+    """Start fresh: remove the sample household, and anything added alongside it."""
+    if get_setting(session, SAMPLE_SETTING) is None:
+        raise HTTPException(409, "No sample data is loaded.")
+    delete_all(session)
+    set_setting(session, SAMPLE_SETTING, None)
+    session.commit()

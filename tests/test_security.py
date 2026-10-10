@@ -104,3 +104,7 @@ def test_pages_may_only_contact_this_app_and_plaid(client):
     assert "script-src 'self' https://cdn.plaid.com" in csp
     assert "cdn.jsdelivr.net" not in client.get("/").text
     assert client.get("/vendor/chart.umd.min.js").status_code == 200
+
+
+def test_browser_revalidates_app_files_after_an_update(client):
+    assert client.get("/app.js").headers["cache-control"] == "no-cache"

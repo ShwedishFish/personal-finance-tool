@@ -22,6 +22,22 @@
 
   <main>
     <section id="tab-dashboard" class="tab active">
+      <div class="panel notice" id="welcome" hidden>
+        <h2>Welcome</h2>
+        <p>Everything you enter stays on this computer. Nothing is uploaded, and there is no account to create.</p>
+        <p class="muted">Start by adding your accounts on the Accounts tab and a plan on the Plan tab, or look around first
+          with a made-up household.</p>
+        <div class="actions">
+          <button id="sample-load" class="primary">Try it with sample data</button>
+          <button id="welcome-accounts">Add my accounts</button>
+        </div>
+      </div>
+      <div class="panel notice" id="sample-banner" hidden>
+        <div class="panel-head">
+          <p>You're looking at <strong>sample data</strong> for a made-up household. Explore and change anything.</p>
+          <button id="sample-clear" class="primary">Start fresh with my own numbers</button>
+        </div>
+      </div>
       <div class="cards" id="summary-cards"></div>
       <div class="grid-2">
         <div class="panel">

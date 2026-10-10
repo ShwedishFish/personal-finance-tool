@@ -38,6 +38,8 @@ main { max-width: 1200px; margin: 0 auto; padding: 1.5rem; }
   background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
   padding: 1rem 1.25rem; margin-bottom: 1rem;
 }
+.panel.notice { border-color: #c9d8f5; background: #f3f7fe; }
+.panel.notice p { margin: 0.4rem 0; }
 .panel-head { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; }
 details.panel summary { cursor: pointer; list-style: none; }
 details.panel summary h2 { display: inline; }

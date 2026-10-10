@@ -64,6 +64,8 @@ and nothing about you is sent anywhere unless you choose to connect a bank (see
 3. Double-click **Start Personal Finance.command** (macOS) or **Start Personal Finance.bat**
    (Windows). The first start takes a minute to install; then your browser opens the app at
    <http://127.0.0.1:8020/>. Close the window to stop it.
+4. Not ready to enter your own numbers? Click **Try it with sample data** to explore a made-up
+   household, then **Start fresh** when you're done.
 
 On macOS, if you see "cannot be opened because it is from an unidentified developer",
 right-click the file, choose **Open**, then **Open** again (only needed once).

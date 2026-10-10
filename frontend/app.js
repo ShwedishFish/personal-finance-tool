@@ -220,7 +220,11 @@ document.querySelectorAll("#tabs button").forEach((b) => b.addEventListener("cli
 // ---------- dashboard ----------
 
 async function loadDashboard() {
-  const [nw, alloc, plans] = await Promise.all([api("/api/net-worth"), api("/api/allocation"), api("/api/plans")]);
+  const [nw, alloc, plans, sample] = await Promise.all([
+    api("/api/net-worth"), api("/api/allocation"), api("/api/plans"), api("/api/sample-data"),
+  ]);
+  $("#welcome").hidden = !sample.empty;
+  $("#sample-banner").hidden = !sample.loaded;
   const cards = [
     card("Net worth", money(nw.net_worth), "", nw.net_worth < 0 ? "bad" : ""),
     card("Assets", money(nw.assets)),
@@ -261,6 +265,23 @@ async function loadDashboard() {
     },
   });
 }
+
+$("#sample-load").addEventListener("click", guard(async () => {
+  await api("/api/sample-data", { method: "POST" });
+  state.planId = null;
+  toast("Loaded a sample household. Look around, then start fresh when you're ready.");
+  await loadDashboard();
+}));
+
+$("#sample-clear").addEventListener("click", guard(async () => {
+  if (!confirm("Remove the sample household, and anything you added alongside it, so you can enter your own numbers?")) return;
+  await api("/api/sample-data", { method: "DELETE" });
+  state.planId = null;
+  toast("Sample data removed.");
+  await loadDashboard();
+}));
+
+$("#welcome-accounts").addEventListener("click", () => showTab("accounts"));
 
 function scoreClass(rate) {
   if (rate >= 0.85) return "good";

@@ -45,6 +45,8 @@ async def privacy_headers(request: Request, call_next):
     response.headers.setdefault("Content-Security-Policy", CONTENT_SECURITY_POLICY)
     response.headers.setdefault("Referrer-Policy", "no-referrer")
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    # Revalidate on every load so an updated app never runs new HTML with a cached old app.js.
+    response.headers.setdefault("Cache-Control", "no-cache")
     return response
 
 
