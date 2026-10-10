@@ -1,6 +1,9 @@
 import csv
 import io
 import json
+import os
+import subprocess
+import sys
 from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -9,8 +12,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from .. import auto_backup
 from ..auth import get_setting, set_setting
-from ..db import get_session
+from ..db import engine, get_session
 from ..models import (
     ACCOUNT_KINDS,
     Account,
@@ -194,6 +198,15 @@ class RestoreRequest(BaseModel):
 @router.get("/backup")
 def export_backup(session: Session = Depends(get_session)):
     """Everything except Plaid access tokens, as JSON. Re-link institutions after restoring elsewhere."""
+    body = backup_contents(session)
+    return Response(
+        json.dumps(body, indent=2),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="finance-backup-{body["exported_at"][:10]}.json"'},
+    )
+
+
+def backup_contents(session: Session) -> dict:
     accounts = []
     for acct in session.scalars(select(Account).order_by(Account.id)):
         item = acct.plaid_item
@@ -222,11 +235,7 @@ def export_backup(session: Session = Depends(get_session)):
         BackupRule.model_validate(r, from_attributes=True).model_dump() for r in session.scalars(select(CategoryRule))
     ]
     body.update(accounts=accounts, plans=plans, transactions=transactions, category_rules=rules)
-    return Response(
-        json.dumps(body, indent=2),
-        media_type="application/json",
-        headers={"Content-Disposition": f'attachment; filename="finance-backup-{stamp.date().isoformat()}.json"'},
-    )
+    return body
 
 
 @router.post("/restore")
@@ -293,6 +302,34 @@ def replace_all(session: Session, backup: Backup) -> dict:
     session.add_all(CategoryRule(**r.model_dump()) for r in backup.category_rules)
     session.flush()
     return {"accounts": len(backup.accounts), "plans": len(backup.plans), "transactions": len(backup.transactions)}
+
+
+@router.get("/storage")
+def storage():
+    """Where this computer keeps the data, so users can see it never leaves."""
+    folder = auto_backup.backup_dir()
+    last = auto_backup.last_backup(folder)
+    return {
+        "database": engine.url.database,
+        "backups": str(folder) if folder else None,
+        "last_backup": last.isoformat(timespec="minutes") if last else None,
+        "keep": auto_backup.KEEP,
+    }
+
+
+@router.post("/storage/show", status_code=204)
+def show_storage():
+    """Open the folder holding the database and its backups in Finder / Explorer."""
+    folder = auto_backup.backup_dir()
+    if folder is None:
+        raise HTTPException(404, "This app isn't using a database file.")
+    target = folder if folder.exists() else folder.parent
+    if sys.platform == "darwin":
+        subprocess.Popen(["open", str(target)])
+    elif os.name == "nt":
+        os.startfile(target)
+    else:
+        subprocess.Popen(["xdg-open", str(target)])
 
 
 def _is_empty(session: Session) -> bool:

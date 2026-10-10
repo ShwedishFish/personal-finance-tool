@@ -94,11 +94,13 @@
         <div class="panel-head">
           <h2>Backup &amp; restore</h2>
           <div class="actions">
+            <button id="storage-show">Show folder</button>
             <a class="button" href="/api/backup">Download backup</a>
             <button id="restore" class="danger">Restore from backup…</button>
             <input type="file" id="restore-file" accept=".json,application/json" hidden />
           </div>
         </div>
+        <p id="storage-info"></p>
         <p class="muted">Your data lives only in this app's local database. A backup is one JSON file with every
           account, balance, plan, and transaction: keep copies somewhere safe, or restore it on another computer. Restoring
           replaces everything here. Bank links are not included; reconnect institutions after restoring elsewhere.</p>

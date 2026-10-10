@@ -1,3 +1,4 @@
+import asyncio
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -9,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .auth import require_auth
+from .auto_backup import keep_backing_up
 from .db import init_db
 from .routers import accounts, auth, data, insights, plaid, plans, spending
 
@@ -36,7 +38,9 @@ CONTENT_SECURITY_POLICY = "; ".join([
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     init_db()
+    backups = asyncio.create_task(keep_backing_up())
     yield
+    backups.cancel()
 
 
 app = FastAPI(title="Personal Finance Tool", lifespan=lifespan)

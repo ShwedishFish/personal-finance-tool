@@ -70,6 +70,20 @@ and nothing about you is sent anywhere unless you choose to connect a bank (see
 On macOS, if you see "cannot be opened because it is from an unidentified developer",
 right-click the file, choose **Open**, then **Open** again (only needed once).
 
+**Updating:** download the new release, unzip it anywhere, and start it the same way. Your data
+isn't in the app folder, so the new copy picks it up and the old folder can be deleted. It lives in:
+
+| System | Folder |
+| --- | --- |
+| macOS | `~/Library/Application Support/Personal Finance Tool` |
+| Windows | `%APPDATA%\Personal Finance Tool` |
+| Linux | `~/.local/share/personal-finance-tool` |
+
+Copies set up before version 1.2 keep their data in the app folder's `data/finance.db`. To
+move to a new download, either copy that file into the folder above, or use **Download backup** in
+the old copy and **Restore from backup** in the new one. A `.env` with your Plaid keys can go in
+that folder too, so it carries over to each new download.
+
 ## Quick start for developers
 
 Requires Python 3.11+ (the script uses [uv](https://docs.astral.sh/uv/) if installed).
@@ -121,8 +135,12 @@ Plaid's window, and the app downloads balances, holdings, and transactions from 
 computer. See [Plaid's privacy policy](https://plaid.com/legal/#end-user-privacy-policy). CSV
 import and manual entry work without any of this.
 
-- Everything stays on your computer in `data/finance.db` (gitignored, readable only by your user).
-  Turn on FileVault (or your OS's disk encryption) so the database is encrypted on disk.
+- Everything stays on your computer in `finance.db` in the folder above (or `data/finance.db` for
+  copies set up before 1.2), readable only by your user. **Accounts → Backup & restore** shows the
+  exact path and opens the folder. Turn on FileVault (or your OS's disk encryption) so the database
+  is encrypted on disk.
+- Every day the app saves a backup to a `backups` folder beside the database and keeps the latest
+  14. They're the same JSON files as **Download backup**, so **Restore from backup** reads them.
 - Plaid access tokens are encrypted with a key kept outside the database: in the macOS Keychain
   (or Windows Credential Manager / Linux Secret Service), else `~/.config/personal-finance-tool/secret.key`,
   or the `PFT_SECRET_KEY` environment variable if set. If the key is lost, only the bank links are

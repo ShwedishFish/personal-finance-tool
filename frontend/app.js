@@ -351,8 +351,24 @@ async function loadAccounts() {
     const acct = accounts.find((a) => a.id === Number(btn.dataset.id));
     await accountAction(btn.dataset.act, acct);
   });
-  await Promise.all([loadPlaid(), loadSecurity()]);
+  await Promise.all([loadPlaid(), loadSecurity(), loadStorage()]);
 }
+
+// ---------- storage ----------
+
+async function loadStorage() {
+  const s = await api("/api/storage");
+  $("#storage-show").hidden = !s.backups;
+  if (!s.database) {
+    $("#storage-info").textContent = "";
+    return;
+  }
+  const last = s.last_backup ? `last one ${esc(s.last_backup.replace("T", " "))}` : "the first one is made once you add data";
+  $("#storage-info").innerHTML = `Stored on this computer at <code>${esc(s.database)}</code>.
+    An automatic backup is saved in the <code>backups</code> folder beside it every day (${last}); the latest ${s.keep} are kept.`;
+}
+
+$("#storage-show").addEventListener("click", guard(() => api("/api/storage/show", { method: "POST" })));
 
 // ---------- security ----------
 
