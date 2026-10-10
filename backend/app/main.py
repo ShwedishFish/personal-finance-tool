@@ -17,12 +17,12 @@ ALLOWED_HOSTS = ["127.0.0.1", "localhost", "testserver"] + [
 ]
 # The browser may only talk to this app, plus Plaid Link when the user connects a bank.
 CONTENT_SECURITY_POLICY = "; ".join([
-    "default-src 'self'",
+    "default-src 'self' https://cdn.plaid.com",
     "script-src 'self' https://cdn.plaid.com",
     "frame-src https://cdn.plaid.com",
     "connect-src 'self' https://*.plaid.com",
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data:",
+    "img-src 'self' data: https://cdn.plaid.com",
     "object-src 'none'",
     "base-uri 'none'",
     "form-action 'self'",
