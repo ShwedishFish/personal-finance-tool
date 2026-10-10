@@ -358,7 +358,7 @@ $("#pw-set").addEventListener("click", guard(async () => {
       ...(enabled ? [{ name: "current_password", label: "Current password", type: "password", required: true, full: true }] : []),
       { name: "new_password", label: "New password (at least 8 characters)", type: "password", required: true, full: true },
       { name: "confirm", label: "Repeat new password", type: "password", required: true, full: true,
-        help: "If you forget it, run scripts/reset-password.sh. Your data is not encrypted with it, so nothing is lost." },
+        help: "If you forget it, double-click scripts/reset-password.command (Mac) or reset-password.bat (Windows). Your data is not encrypted with it, so nothing is lost." },
     ],
     onSubmit: async (v) => {
       if (v.new_password !== v.confirm) throw new Error("The new passwords don't match");

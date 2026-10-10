@@ -1,7 +1,7 @@
 """Optional app password, so someone at your unlocked computer can't open your finances.
 
 The password gates the API only: the database is not encrypted with it, so forgetting it loses
-nothing. Remove it with scripts/reset-password.sh.
+nothing. Remove it with scripts/reset-password.command (or .bat on Windows).
 """
 
 import hashlib

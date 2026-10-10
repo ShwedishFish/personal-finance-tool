@@ -1,3 +1,4 @@
+import os
 import stat
 
 import pytest
@@ -45,7 +46,8 @@ def test_key_falls_back_to_private_file(tmp_path, monkeypatch):
     monkeypatch.setattr(crypto, "KEY_FILE", tmp_path / "cfg" / "secret.key")
     monkeypatch.setattr(crypto, "_cipher", None)
     token = crypto.encrypt("abc")
-    assert stat.S_IMODE((tmp_path / "cfg" / "secret.key").stat().st_mode) == 0o600
+    if os.name != "nt":  # Windows has no owner-only mode bits; the user profile folder is private
+        assert stat.S_IMODE((tmp_path / "cfg" / "secret.key").stat().st_mode) == 0o600
     assert "key file" in crypto.key_location()
     monkeypatch.setattr(crypto, "_cipher", None)  # reload from the file
     assert crypto.decrypt(token) == "abc"

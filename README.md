@@ -127,7 +127,8 @@ import and manual entry work without any of this.
   affected: remove and reconnect those institutions.
 - **Optional password** (Accounts → Security): require signing in before the browser can read
   anything. It protects against someone using your unlocked computer; it doesn't encrypt the data,
-  so forgetting it loses nothing: run `scripts/reset-password.sh`.
+  so forgetting it loses nothing: double-click `scripts/reset-password.command` (macOS) or
+  `scripts/reset-password.bat` (Windows).
 - The server listens only on 127.0.0.1 and rejects requests whose `Host` isn't `127.0.0.1` or
   `localhost`, so web pages can't read it through DNS rebinding. To reach it under another name
   (for example behind your own reverse proxy), list it in `PFT_ALLOWED_HOSTS`.
